@@ -200,6 +200,7 @@ opts.Add(BoolVariable("d3d12", "Enable the Direct3D 12 rendering driver on suppo
 opts.Add(BoolVariable("metal", "Enable the Metal rendering driver on supported platforms (Apple arm64 only)", False))
 opts.Add(BoolVariable("use_volk", "Use the volk library to load the Vulkan loader dynamically", True))
 opts.Add(BoolVariable("use_streamline", "Enable Streamline support", True))
+opts.Add(BoolVariable("use_ngx_dlss", "Enable NVIDIA NGX DLSS on Linux (bypasses Streamline)", True))
 opts.Add(BoolVariable("accesskit", "Enable the AccessKit driver for screen reader support", True))
 opts.Add(BoolVariable("sdl", "Enable the SDL3 input driver", True))
 opts.Add(
@@ -601,6 +602,18 @@ if env["use_streamline"]:
         env.AppendUnique(CPPDEFINES=["STREAMLINE_ENABLED"])
     else:
         env["use_streamline"] = False
+
+if env["use_ngx_dlss"]:
+    if env["platform"] == "linuxbsd" and env["arch"] == "x86_64":
+        ngx_dir = "#thirdparty/ngx"
+        env.AppendUnique(CPPDEFINES=["NGX_DLSS_ENABLED"])
+        env.Append(CPPPATH=[ngx_dir + "/include"])
+        # NGX headers include <vulkan/vulkan.h> — ensure Godot's bundled Vulkan headers are findable
+        env.Append(CPPPATH=["#thirdparty/vulkan/include"])
+        env.Append(LIBPATH=[ngx_dir + "/lib/linux_x86_64"])
+        env.Append(LIBS=["nvsdk_ngx"])
+    else:
+        env["use_ngx_dlss"] = False
 
 # Library Support
 if env["library_type"] != "executable":
