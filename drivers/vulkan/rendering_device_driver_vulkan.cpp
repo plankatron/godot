@@ -608,6 +608,15 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 #endif
 	_register_requested_device_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME, false);
 
+#ifdef NGX_DLSS_ENABLED
+	// DLSS requires these NVIDIA-specific Vulkan extensions for binary shader loading
+	// and image view handle access. On Windows, Streamline's interposer adds these
+	// automatically; on Linux with direct NGX, we must register them explicitly.
+	_register_requested_device_extension(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
+#endif
+
 	{
 		// Debug marker extensions.
 		// Should be last element in the array.

@@ -1035,9 +1035,9 @@ void RendererViewport::viewport_set_scaling_3d_mode(RID p_viewport, RSE::Viewpor
 		WARN_PRINT_ONCE_ED("MetalFX Spatial 3D scaling is only available when using the Forward+ or Mobile renderer.");
 	}
 	if (p_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
-#ifndef STREAMLINE_ENABLED
-		ERR_PRINT_ONCE_ED("DLSS is not available because Streamline support was not compiled into the engine.");
-#else
+#if !defined(STREAMLINE_ENABLED) && !defined(NGX_DLSS_ENABLED)
+		ERR_PRINT_ONCE_ED("DLSS is not available because neither Streamline nor NGX DLSS support was compiled into the engine.");
+#elif defined(STREAMLINE_ENABLED)
 		if (StreamlineContext::get().slInit == nullptr) {
 			ERR_PRINT_ONCE_ED("DLSS is not available because Streamline failed to initialize (sl.interposer.dll not found or failed to load). Please download the Streamline SDK from GitHub (NVIDIA-RTX/Streamline) and make sure the Streamline SDK binaries are in the same directory as the Godot executable, and restart Godot.");
 		}
