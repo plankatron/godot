@@ -889,6 +889,22 @@ Patches:
 - `0001-remove-unused-save-features.patch` ([GH-113965](https://github.com/godotengine/godot/issues/113965))
 
 
+## ngx
+
+- Upstream: https://github.com/NVIDIA/DLSS
+- Version: 310.5.3 (2025)
+- License: NVIDIA RTX SDK License
+
+Files extracted from upstream source:
+
+- Headers from `include/`: `nvsdk_ngx*.h`
+- Linux static library: `lib/Linux_x86_64/dev/libnvsdk_ngx.a`
+
+Used by the direct NGX DLSS backend on Linux (see `servers/rendering/renderer_rd/effects/dlss.cpp`
+under `NGX_DLSS_ENABLED`). The runtime `.so` files (`libnvidia-ngx-dlss*.so`) are provided
+separately at `lib/linux_x86_64/` and loaded at runtime.
+
+
 ## openxr
 
 - Upstream: https://github.com/KhronosGroup/OpenXR-SDK
