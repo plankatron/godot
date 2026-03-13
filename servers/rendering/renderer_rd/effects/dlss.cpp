@@ -659,11 +659,20 @@ static bool _ngx_ensure_init() {
 	String ngx_thirdparty = exe_dir.path_join("thirdparty/ngx/lib/linux_x86_64"); // dev build
 
 	// Convert to wchar_t for NGX API
-	Char16String shipped_w = ngx_shipped.utf16();
-	Char16String thirdparty_w = ngx_thirdparty.utf16();
+	// On Linux wchar_t is 4 bytes (UTF-32), Char16String is 2 bytes (UTF-16)
+	// Must widen char-by-char, not reinterpret memory
+	auto to_wstring = [](const String &s) -> std::wstring {
+		CharString utf8 = s.utf8();
+		std::wstring result;
+		result.reserve(utf8.length());
+		for (int i = 0; i < utf8.length(); i++) {
+			result.push_back((wchar_t)(unsigned char)utf8[i]);
+		}
+		return result;
+	};
 	static thread_local std::wstring shipped_ws, thirdparty_ws;
-	shipped_ws.assign(shipped_w.get_data(), shipped_w.get_data() + shipped_w.length());
-	thirdparty_ws.assign(thirdparty_w.get_data(), thirdparty_w.get_data() + thirdparty_w.length());
+	shipped_ws = to_wstring(ngx_shipped);
+	thirdparty_ws = to_wstring(ngx_thirdparty);
 	const wchar_t *ngx_search_paths[] = {
 		shipped_ws.c_str(),
 		thirdparty_ws.c_str(),
