@@ -42,7 +42,9 @@
 #elif defined(NGX_DLSS_ENABLED)
 #define ENABLE_NGX_DLSS 1
 #include <dlfcn.h>
+#include <string>
 #include "core/io/dir_access.h"
+#include "core/os/os.h"
 #include "drivers/vulkan/godot_vulkan.h"
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
@@ -650,12 +652,23 @@ static bool _ngx_ensure_init() {
 	// Create the log/data directory
 	DirAccess::make_dir_absolute("/tmp/ngx_dlss_logs");
 
-	// Tell NGX where to find DLSS feature .so files
-	// The driver's libnvidia-ngx.so.1 dlopen()s libnvidia-ngx-*.so* from these paths
-	static const wchar_t *ngx_search_paths[] = {
-		L"/storage/projects/code/godot/nvidia-rtx-godot/thirdparty/ngx/lib/linux_x86_64",
-		L"/tmp/ngx_dlss_logs",
+	// Tell NGX where to find DLSS feature .so files (libnvidia-ngx-dlss*.so)
+	// Search order: 1) next to executable (shipped game), 2) thirdparty/ (dev build)
+	String exe_dir = OS::get_singleton()->get_executable_path().get_base_dir();
+	String ngx_shipped = exe_dir; // .so files next to the game binary
+	String ngx_thirdparty = exe_dir.path_join("thirdparty/ngx/lib/linux_x86_64"); // dev build
+
+	// Convert to wchar_t for NGX API
+	Char16String shipped_w = ngx_shipped.utf16();
+	Char16String thirdparty_w = ngx_thirdparty.utf16();
+	static thread_local std::wstring shipped_ws, thirdparty_ws;
+	shipped_ws.assign(shipped_w.get_data(), shipped_w.get_data() + shipped_w.length());
+	thirdparty_ws.assign(thirdparty_w.get_data(), thirdparty_w.get_data() + thirdparty_w.length());
+	const wchar_t *ngx_search_paths[] = {
+		shipped_ws.c_str(),
+		thirdparty_ws.c_str(),
 	};
+	print_line(vformat("[NGX DLSS] Searching for DLSS .so in: %s, %s", ngx_shipped, ngx_thirdparty));
 
 	NVSDK_NGX_FeatureCommonInfo feature_info = {};
 	memset(&feature_info, 0, sizeof(feature_info));
