@@ -304,6 +304,11 @@ SceneShaderRaytracing::~SceneShaderRaytracing() {
 		}
 	}
 	multi_hg_shaders.clear();
+
+	if (raygen_shader_version.is_valid()) {
+		raygen_shader.version_free(raygen_shader_version);
+	}
+
 	singleton = nullptr;
 }
 
