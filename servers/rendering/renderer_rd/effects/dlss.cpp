@@ -653,14 +653,15 @@ static bool _ngx_ensure_init() {
 	DirAccess::make_dir_absolute("/tmp/ngx_dlss_logs");
 
 	// Tell NGX where to find DLSS feature .so files (libnvidia-ngx-dlss*.so)
-	// Search order: 1) next to executable (shipped game), 2) thirdparty/ (dev build)
+	// Search order:
+	//   1) next to executable (shipped game: game.x86_64 + .so in same dir)
+	//   2) ../thirdparty/ngx/lib/linux_x86_64 (dev build: binary in bin/, .so at repo root)
 	String exe_dir = OS::get_singleton()->get_executable_path().get_base_dir();
-	String ngx_shipped = exe_dir; // .so files next to the game binary
-	String ngx_thirdparty = exe_dir.path_join("thirdparty/ngx/lib/linux_x86_64"); // dev build
+	String ngx_shipped = exe_dir;
+	String ngx_dev = exe_dir.path_join("../thirdparty/ngx/lib/linux_x86_64").simplify_path();
 
 	// Convert to wchar_t for NGX API
-	// On Linux wchar_t is 4 bytes (UTF-32), Char16String is 2 bytes (UTF-16)
-	// Must widen char-by-char, not reinterpret memory
+	// On Linux wchar_t is 4 bytes (UTF-32), so widen char-by-char from UTF-8
 	auto to_wstring = [](const String &s) -> std::wstring {
 		CharString utf8 = s.utf8();
 		std::wstring result;
@@ -670,14 +671,14 @@ static bool _ngx_ensure_init() {
 		}
 		return result;
 	};
-	static thread_local std::wstring shipped_ws, thirdparty_ws;
+	static thread_local std::wstring shipped_ws, dev_ws;
 	shipped_ws = to_wstring(ngx_shipped);
-	thirdparty_ws = to_wstring(ngx_thirdparty);
+	dev_ws = to_wstring(ngx_dev);
 	const wchar_t *ngx_search_paths[] = {
 		shipped_ws.c_str(),
-		thirdparty_ws.c_str(),
+		dev_ws.c_str(),
 	};
-	print_line(vformat("[NGX DLSS] Searching for DLSS .so in: %s, %s", ngx_shipped, ngx_thirdparty));
+	print_line(vformat("[NGX DLSS] Searching for DLSS .so in: %s, %s", ngx_shipped, ngx_dev));
 
 	NVSDK_NGX_FeatureCommonInfo feature_info = {};
 	memset(&feature_info, 0, sizeof(feature_info));
