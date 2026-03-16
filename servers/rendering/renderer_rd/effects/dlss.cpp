@@ -937,11 +937,12 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			dlssd_create.InTargetWidth = ctx->output_width;
 			dlssd_create.InTargetHeight = ctx->output_height;
 			dlssd_create.InPerfQualityValue = ctx->perf_quality;
+			// No AutoExposure: Godot's auto_exposure handles it via tonemapping.
+			// Double-exposure (DLSS internal + Godot) causes progressive white blowout.
 			dlssd_create.InFeatureCreateFlags =
 					NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
 					NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-					NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
-					NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+					NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
 
 			result = NGX_VULKAN_CREATE_DLSSD_EXT1(
 					VK_NULL_HANDLE, vk_cmd, 1, 1,
@@ -968,8 +969,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			dlss_create.InFeatureCreateFlags =
 					NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
 					NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-					NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
-					NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+					NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
 
 			result = NGX_VULKAN_CREATE_DLSS_EXT(
 					vk_cmd, 1, 1,
