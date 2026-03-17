@@ -113,6 +113,23 @@ void main() {
 			// Reverse-Z far plane = 0.0.
 			imageStore(rt_depth_image, pixel, vec4(0.0));
 
+			// Sky: camera-only MV by reprojecting the ray direction through prev camera.
+			{
+				vec2 uv = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy);
+				vec3 sky_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
+
+				mat4 pv_view = transpose(mat4(
+						prev_frame.prev_view_matrix[0],
+						prev_frame.prev_view_matrix[1],
+						prev_frame.prev_view_matrix[2],
+						vec4(0.0, 0.0, 0.0, 1.0)));
+				vec3 pv_pos = (pv_view * vec4(sky_world, 1.0)).xyz;
+				vec4 pv_clip = prev_frame.prev_projection_matrix * vec4(pv_pos, 1.0);
+				vec2 prev_uv = 0.5 + (pv_clip.xy / pv_clip.w) * 0.5;
+
+				imageStore(rt_velocity_image, pixel, vec4(prev_uv - uv, 0.0, 0.0));
+			}
+
 #ifdef DLSS_RR_ENABLED
 			// Sky has no surface - write zeros for albedo/normals.
 			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(0.0));
@@ -121,6 +138,8 @@ void main() {
 			imageStore(dlss_rr_normal_roughness, pixel, vec4(-gl_WorldRayDirectionEXT, 0.0));
 			// Sky hit distance: -1 indicates infinite/sky.
 			imageStore(dlss_rr_specular_hit_dist, pixel, vec4(-1.0));
+			// No specular motion for sky.
+			imageStore(dlss_rr_specular_mvec, pixel, vec4(0.0));
 #endif
 		}
 	}
@@ -348,6 +367,7 @@ void debug_visualize(
 void main() {
 	HitData h = compute_hit_data();
 	write_primary_hit_depth(h.hit_pos);
+	write_primary_hit_velocity(h.hit_pos);
 
 #ifdef RT_CUSTOM_HIT_GROUP
 	uint rt_geometry_idx = h.geometry_idx;

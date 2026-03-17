@@ -176,6 +176,7 @@ public:
 		RID dlss_rr_get_specular_albedo() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_ALBEDO); }
 		RID dlss_rr_get_normal_roughness() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_NORMAL_ROUGHNESS); }
 		RID dlss_rr_get_specular_hit_dist() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_HIT_DIST); }
+		RID dlss_rr_get_specular_mvec() const { return render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_DLSS_RR_SPECULAR_MVEC); }
 
 		RID get_color_only_fb();
 		RID get_color_pass_fb(uint32_t p_color_pass_flags);

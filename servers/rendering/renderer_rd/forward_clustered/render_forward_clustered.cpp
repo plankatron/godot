@@ -152,6 +152,14 @@ void RenderForwardClustered::RenderBufferDataForwardClustered::dlss_rr_ensure_bu
 			RD::DATA_FORMAT_R16_SFLOAT,
 			usage_bits,
 			RD::TEXTURE_SAMPLES_1);
+
+	// Specular Motion Vectors: UV-space deltas for specular reflection hits (RG16F).
+	render_buffers->create_texture(
+			RB_SCOPE_DLSS_RR,
+			RB_TEX_DLSS_RR_SPECULAR_MVEC,
+			RD::DATA_FORMAT_R16G16_SFLOAT,
+			usage_bits,
+			RD::TEXTURE_SAMPLES_1);
 }
 
 void RenderForwardClustered::RenderBufferDataForwardClustered::dlss_rr_free_buffers() {
@@ -2430,6 +2438,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		// Ensure raytracing output textures exist
 		rb_data->rt_ensure_textures();
 
+		// Ensure velocity buffer exists before RT dispatch — RT closest-hit writes motion vectors directly.
+		rb->ensure_velocity();
+
 		// Determine RT pipeline flags based on current settings
 		uint32_t rt_flags = SceneShaderRaytracing::RT_FLAG_NONE;
 		uint32_t sample_count = 1;
@@ -2482,35 +2493,10 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			RD::get_singleton()->draw_command_end_label();
 		}
 
-		// Generate motion vectors for temporal effects.
-		// First fill the entire velocity buffer with depth-based camera motion,
-		// then render the motion pass on top to overwrite with per-object motion vectors.
-		// Note: Motion pass writes to color buffer too, but we overwrite it with RT output afterward.
-		if (using_motion_pass) {
-			rb->ensure_velocity();
-
-			// Fill velocity buffer with depth-based motion vectors.
-			motion_vectors_store->process(rb,
-					p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform,
-					p_render_data->scene_data->prev_cam_projection, p_render_data->scene_data->prev_cam_transform);
-
-			// Render motion pass to overwrite with per-object motion vectors for moving objects.
-			// This also writes to color buffer, but we'll overwrite that with RT output next.
-			bool render_motion_pass = !render_list[RENDER_LIST_MOTION].elements.is_empty();
-			if (render_motion_pass) {
-				RD::get_singleton()->draw_command_begin_label("Render Motion Pass (RT)");
-
-				RENDER_TIMESTAMP("Render Motion Pass (RT)");
-
-				uint32_t rt_motion_pass_uniform_buffer_index = _setup_environment(p_render_data, is_reflection_probe, screen_size, screen_size, p_default_bg_color, true, using_motion_pass);
-				RID rp_uniform_set_motion = _setup_render_pass_uniform_set(RENDER_LIST_MOTION, p_render_data, radiance_texture, samplers, rt_motion_pass_uniform_buffer_index);
-
-				RenderListParameters render_list_params(render_list[RENDER_LIST_MOTION].elements.ptr(), render_list[RENDER_LIST_MOTION].element_info.ptr(), render_list[RENDER_LIST_MOTION].elements.size(), reverse_cull, PASS_MODE_COLOR, color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set_motion, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-				_render_list_with_draw_list(&render_list_params, color_framebuffer);
-
-				RD::get_singleton()->draw_command_end_label();
-			}
-		}
+		// Motion vectors: RT closest-hit writes MVs directly for all primary hit pixels.
+		// Miss shader writes sentinel (-1,-1) for sky; DLSS's motion_vector_decode derives those from depth.
+		// Skip both motion_vectors_store (depth-based camera MVs) and rasterized motion pass
+		// — RT MVs correctly account for both camera and per-object motion at ray hit positions.
 
 		// Copy raytracing output to the main color buffer AFTER motion pass.
 		// This overwrites any color written by the motion pass while preserving motion vectors.
@@ -2820,6 +2806,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 					params.dlss_rr_specular_albedo = rb_data->dlss_rr_get_specular_albedo();
 					params.dlss_rr_normal_roughness = rb_data->dlss_rr_get_normal_roughness();
 					params.dlss_rr_specular_hit_dist = rb_data->dlss_rr_get_specular_hit_dist();
+					params.dlss_rr_specular_mvec = rb_data->dlss_rr_get_specular_mvec();
 				}
 
 				Projection correction;

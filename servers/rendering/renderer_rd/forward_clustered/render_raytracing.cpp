@@ -77,6 +77,12 @@ RenderRaytracing::~RenderRaytracing() {
 	if (params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(params_buffer);
 	}
+	if (prev_transform_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(prev_transform_buffer);
+	}
+	if (prev_camera_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(prev_camera_buffer);
+	}
 
 	if (bindless_block) {
 		memdelete(bindless_block);
@@ -205,6 +211,7 @@ void RenderRaytracing::prepare_frame() {
 	// Just clear the per-frame lists
 	blass.clear();
 	blas_transforms.clear();
+	prev_blas_transforms.clear();
 	instance_flags.clear();
 	sbt_offsets.clear();
 	geometry_data.clear();
@@ -229,6 +236,11 @@ void RenderRaytracing::prepare_frame() {
 		RD::get_singleton()->free_rid(material_buffer);
 		material_buffer = RID();
 	}
+	if (prev_transform_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(prev_transform_buffer);
+		prev_transform_buffer = RID();
+	}
+	// prev_camera_buffer is persistent (fixed size) — only freed in destructor.
 
 	// Reset per-frame metrics
 	cache_hits = 0;
@@ -1109,6 +1121,19 @@ void RenderRaytracing::finalize_buffers() {
 		memcpy(buffer_data.ptrw(), material_data.ptr(), buffer_size);
 		material_buffer = RD::get_singleton()->storage_buffer_create(buffer_size, buffer_data);
 	}
+
+	// Create previous transform buffer (transposed 3x4, 12 floats per instance).
+	if (prev_blas_transforms.size() > 0) {
+		uint32_t instance_count = prev_blas_transforms.size();
+		uint32_t buffer_size = instance_count * 12 * sizeof(float);
+		Vector<uint8_t> buffer_data;
+		buffer_data.resize(buffer_size);
+		float *fptr = reinterpret_cast<float *>(buffer_data.ptrw());
+		for (uint32_t i = 0; i < instance_count; i++) {
+			RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_blas_transforms[i], fptr + i * 12);
+		}
+		prev_transform_buffer = RD::get_singleton()->storage_buffer_create(buffer_size, buffer_data);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,6 +1172,7 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 			continue;
 		}
 		const Transform3D &instance_transform = inst->transform;
+		const Transform3D &instance_prev_transform = inst->prev_transform;
 
 		// Walk the surface cache linked list.
 		const RenderForwardClustered::GeometryInstanceSurfaceDataCache *surf = inst->surface_caches;
@@ -1162,6 +1188,13 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 
 			blass.push_back(surf_data->blas);
 			geometry_data.push_back(surf_data->geometry);
+
+			// Compute previous frame transform for motion vectors (same AABB correction as current).
+			Transform3D prev_final_transform = instance_prev_transform;
+			if (surf_data->is_compressed) {
+				prev_final_transform = instance_prev_transform * surf_data->aabb_transform;
+			}
+			prev_blas_transforms.push_back(prev_final_transform);
 
 #ifdef TOOLS_ENABLED
 			if (collect_render_info) {
@@ -1483,6 +1516,38 @@ void RenderRaytracing::update_uniform_set(const RenderDataRD *p_render_data) {
 		uniforms.push_back(u);
 	}
 
+	// Binding 4: Previous frame camera matrices (projection + view) for RT motion vectors.
+	{
+		struct RTPrevCameraUBO {
+			float prev_projection_matrix[16]; // mat4
+			float prev_view_matrix[12]; // mat3x4 (transposed 3x4)
+		};
+		static_assert(sizeof(RTPrevCameraUBO) == 112, "RTPrevCameraUBO must be 112 bytes");
+
+		RTPrevCameraUBO prev_cam = {};
+		if (p_render_data && p_render_data->scene_data) {
+			// Apply depth correction (Y flip + Z remap) to match scene_data convention.
+			// No jitter — DLSS handles jitter offset separately.
+			Projection correction;
+			correction.set_depth_correction(true); // flip_y=true, reverse_z=true, remap_z=true
+			Projection prev_proj = correction * p_render_data->scene_data->prev_cam_projection;
+			Transform3D prev_view = p_render_data->scene_data->prev_cam_transform.affine_inverse();
+			RendererRD::MaterialStorage::store_camera(prev_proj, prev_cam.prev_projection_matrix);
+			RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_view, prev_cam.prev_view_matrix);
+		}
+
+		if (!prev_camera_buffer.is_valid()) {
+			prev_camera_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(RTPrevCameraUBO));
+		}
+		RD::get_singleton()->buffer_update(prev_camera_buffer, 0, sizeof(RTPrevCameraUBO), &prev_cam);
+
+		RD::Uniform u;
+		u.binding = 4;
+		u.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+		u.append_id(prev_camera_buffer);
+		uniforms.push_back(u);
+	}
+
 	// Binding 5: Material buffer.
 	{
 		RD::Uniform u;
@@ -1617,6 +1682,15 @@ void RenderRaytracing::update_uniform_set(const RenderDataRD *p_render_data) {
 			u.append_id(rb_data->dlss_rr_get_specular_hit_dist());
 			uniforms.push_back(u);
 		}
+
+		// Binding 29: DLSS RR Specular Motion Vectors
+		{
+			RD::Uniform u;
+			u.binding = 29;
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.append_id(rb_data->dlss_rr_get_specular_mvec());
+			uniforms.push_back(u);
+		}
 	}
 
 	// Binding 13: Light buffer (SSBO).
@@ -1626,6 +1700,19 @@ void RenderRaytracing::update_uniform_set(const RenderDataRD *p_render_data) {
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		if (light_buffer.is_valid()) {
 			u.append_id(light_buffer);
+		} else {
+			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+		}
+		uniforms.push_back(u);
+	}
+
+	// Binding 14: Previous transform buffer (per-instance transposed 3x4 transforms).
+	{
+		RD::Uniform u;
+		u.binding = 14;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		if (prev_transform_buffer.is_valid()) {
+			u.append_id(prev_transform_buffer);
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
@@ -1643,6 +1730,21 @@ void RenderRaytracing::update_uniform_set(const RenderDataRD *p_render_data) {
 
 	// Bindings 16-27: Material samplers (12 filter/repeat combinations for custom shaders).
 	RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default().append_uniforms(uniforms, 16);
+
+	// Binding 28: Velocity output image (RG16F) for RT motion vectors.
+	{
+		Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+		RD::Uniform u;
+		u.binding = 28;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		if (rb.is_valid() && rb->has_velocity_buffer(false)) {
+			u.append_id(rb->get_velocity_buffer(false));
+		} else {
+			// Fallback: use RT depth as a dummy image (same dimensions, won't be written).
+			u.append_id(rb_data->rt_get_depth_texture());
+		}
+		uniforms.push_back(u);
+	}
 
 	// Use the appropriate shader variant (base or DLSS RR) for uniform set creation
 	uint32_t rt_flags = dlss_rr_enabled ? SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED : SceneShaderRaytracing::RT_FLAG_NONE;

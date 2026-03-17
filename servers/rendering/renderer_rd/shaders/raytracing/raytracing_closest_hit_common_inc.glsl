@@ -99,6 +99,46 @@ void write_primary_hit_depth(vec3 hit_pos) {
 }
 
 // ============================================================================
+// VELOCITY WRITE (primary ray only)
+// ============================================================================
+
+/// Write UV-space motion vector for primary ray hits (bounce 0, sample 0 only).
+/// Reprojects the hit point through the previous frame's object + camera transforms.
+void write_primary_hit_velocity(vec3 world_hit_pos) {
+	if (get_total_bounces(payload.packed_bounces_flags) != 0u || !is_sample_zero(payload.packed_bounces_flags)) {
+		return;
+	}
+
+	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	vec2 uv = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy);
+
+	// Transform world hit position to object space via gl_WorldToObjectEXT.
+	vec3 obj_pos = (gl_WorldToObjectEXT * vec4(world_hit_pos, 1.0)).xyz;
+
+	// Reconstruct previous world position from prev_transforms SSBO.
+	uint idx = gl_InstanceCustomIndexEXT;
+	vec4 r0 = prev_transforms[idx * 3u + 0u];
+	vec4 r1 = prev_transforms[idx * 3u + 1u];
+	vec4 r2 = prev_transforms[idx * 3u + 2u];
+	vec3 prev_world = vec3(
+			dot(r0.xyz, obj_pos) + r0.w,
+			dot(r1.xyz, obj_pos) + r1.w,
+			dot(r2.xyz, obj_pos) + r2.w);
+
+	// Project through previous camera (view + unjittered projection).
+	mat4 prev_view_mat = transpose(mat4(
+			prev_frame.prev_view_matrix[0],
+			prev_frame.prev_view_matrix[1],
+			prev_frame.prev_view_matrix[2],
+			vec4(0.0, 0.0, 0.0, 1.0)));
+	vec3 prev_view_pos = (prev_view_mat * vec4(prev_world, 1.0)).xyz;
+	vec4 prev_clip = prev_frame.prev_projection_matrix * vec4(prev_view_pos, 1.0);
+	vec2 prev_uv = 0.5 + (prev_clip.xy / prev_clip.w) * 0.5;
+
+	imageStore(rt_velocity_image, pixel, vec4(prev_uv - uv, 0.0, 0.0));
+}
+
+// ============================================================================
 // SHADE AND BOUNCE
 // ============================================================================
 
@@ -164,10 +204,49 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 			}
 		}
 		float spec_hit_dist = -1.0;
+		vec2 spec_mv = vec2(0.0);
 		if (rayQueryGetIntersectionTypeEXT(spec_rq, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
 			spec_hit_dist = rayQueryGetIntersectionTEXT(spec_rq, true);
+
+			vec3 spec_world_hit = spec_origin + spec_dir * spec_hit_dist;
+			uint spec_idx = rayQueryGetIntersectionInstanceCustomIndexEXT(spec_rq, true);
+
+			// Current UV of reflected point.
+			mat4 cur_view_mat = transpose(mat4(
+					scene_data_block.data.view_matrix[0],
+					scene_data_block.data.view_matrix[1],
+					scene_data_block.data.view_matrix[2],
+					vec4(0.0, 0.0, 0.0, 1.0)));
+			vec3 spec_view_pos = (cur_view_mat * vec4(spec_world_hit, 1.0)).xyz;
+			vec4 spec_clip = scene_data_block.data.projection_matrix * vec4(spec_view_pos, 1.0);
+			vec2 spec_cur_uv = 0.5 + (spec_clip.xy / spec_clip.w) * 0.5;
+
+			// Previous world position via object space + prev transform.
+			mat4x3 spec_world_to_obj = rayQueryGetIntersectionWorldToObjectEXT(spec_rq, true);
+			vec3 spec_obj_pos = spec_world_to_obj * vec4(spec_world_hit, 1.0);
+
+			vec4 sr0 = prev_transforms[spec_idx * 3u + 0u];
+			vec4 sr1 = prev_transforms[spec_idx * 3u + 1u];
+			vec4 sr2 = prev_transforms[spec_idx * 3u + 2u];
+			vec3 spec_prev_world = vec3(
+					dot(sr0.xyz, spec_obj_pos) + sr0.w,
+					dot(sr1.xyz, spec_obj_pos) + sr1.w,
+					dot(sr2.xyz, spec_obj_pos) + sr2.w);
+
+			// Previous UV via prev camera.
+			mat4 prev_view_mat = transpose(mat4(
+					prev_frame.prev_view_matrix[0],
+					prev_frame.prev_view_matrix[1],
+					prev_frame.prev_view_matrix[2],
+					vec4(0.0, 0.0, 0.0, 1.0)));
+			vec3 spec_prev_view = (prev_view_mat * vec4(spec_prev_world, 1.0)).xyz;
+			vec4 spec_prev_clip = prev_frame.prev_projection_matrix * vec4(spec_prev_view, 1.0);
+			vec2 spec_prev_uv = 0.5 + (spec_prev_clip.xy / spec_prev_clip.w) * 0.5;
+
+			spec_mv = spec_prev_uv - spec_cur_uv;
 		}
 		imageStore(dlss_rr_specular_hit_dist, pixel, vec4(spec_hit_dist));
+		imageStore(dlss_rr_specular_mvec, pixel, vec4(spec_mv, 0.0, 0.0));
 	}
 #endif
 

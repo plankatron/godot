@@ -45,6 +45,7 @@
 #define RB_TEX_DLSS_RR_SPECULAR_ALBEDO SNAME("specular_albedo")
 #define RB_TEX_DLSS_RR_NORMAL_ROUGHNESS SNAME("normal_roughness")
 #define RB_TEX_DLSS_RR_SPECULAR_HIT_DIST SNAME("specular_hit_dist")
+#define RB_TEX_DLSS_RR_SPECULAR_MVEC SNAME("specular_mvec")
 
 class RenderDataRD;
 
@@ -223,10 +224,13 @@ class RenderRaytracing {
 	// Acceleration structures.
 	LocalVector<RID> blass;
 	LocalVector<Transform3D> blas_transforms;
+	LocalVector<Transform3D> prev_blas_transforms; // Previous frame transforms for motion vectors.
 	LocalVector<uint32_t> instance_flags;
 	LocalVector<uint32_t> sbt_offsets; // 0 = default material hit group
 	RID tlas_instances_buffer;
 	RID tlas;
+	RID prev_transform_buffer; // SSBO: per-instance previous transforms (transposed 3x4, 12 floats each).
+	RID prev_camera_buffer; // UBO: previous frame camera matrices (projection + view).
 	uint32_t frame_counter = 0;
 
 	// Cache helpers.

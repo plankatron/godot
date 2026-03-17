@@ -25,6 +25,12 @@ scene_data_block;
 
 #ifndef RT_STAGE_ANY_HIT
 
+// Binding 4: Previous frame camera matrices for motion vector computation.
+layout(set = 0, binding = 4, std140) uniform RTPrevFrameData {
+	mat4 prev_projection_matrix;
+	mat3x4 prev_view_matrix; // Transposed 3x4, same layout as scene_data view_matrix.
+} prev_frame;
+
 layout(set = 0, binding = 6, std140) uniform RaytracingParams {
 	vec4 rt_params[4];
 };
@@ -38,8 +44,17 @@ layout(set = 0, binding = 9, rgba16f) uniform image2D dlss_rr_diffuse_albedo;
 layout(set = 0, binding = 10, rgba16f) uniform image2D dlss_rr_specular_albedo;
 layout(set = 0, binding = 11, rgba16f) uniform image2D dlss_rr_normal_roughness;
 layout(set = 0, binding = 12, r16f) uniform image2D dlss_rr_specular_hit_dist;
+layout(set = 0, binding = 29, rg16f) uniform image2D dlss_rr_specular_mvec;
 #endif
 
+// Binding 14: Per-instance previous frame transforms (transposed 3x4, 3 vec4s each).
+layout(set = 0, binding = 14, std430) readonly buffer PrevTransformBuffer {
+	vec4 prev_transforms[];
+};
+
 layout(set = 0, binding = 15, r32f) uniform image2D rt_depth_image;
+
+// Binding 28: Velocity output (RG16F, UV-space motion vectors).
+layout(set = 0, binding = 28, rg16f) uniform image2D rt_velocity_image;
 
 #endif // !RT_STAGE_ANY_HIT
