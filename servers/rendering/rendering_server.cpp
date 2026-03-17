@@ -3748,7 +3748,7 @@ void RenderingServer::init() {
 			mode_hints_arr.push_back("MetalFX (Spatial):3");
 			mode_hints_arr.push_back("MetalFX (Temporal):4");
 			mode_hints_metal = String(",").join(mode_hints_arr);
-#ifdef STREAMLINE_ENABLED
+#if defined(STREAMLINE_ENABLED) || defined(NGX_DLSS_ENABLED)
 			mode_hints = mode_hints + ",NVIDIA DLSS:5";
 #endif
 		}

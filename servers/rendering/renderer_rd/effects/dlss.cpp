@@ -605,13 +605,14 @@ public:
 	NVSDK_NGX_Handle *dlss_rr_handle = nullptr;
 	NVSDK_NGX_Handle *dlss_sr_handle = nullptr;
 	bool feature_created = false;
+	bool feature_is_rr = false; // tracks which mode was created
 	NVSDK_NGX_PerfQuality_Value perf_quality = NVSDK_NGX_PerfQuality_Value_Balanced;
 	uint32_t render_width = 0;
 	uint32_t render_height = 0;
 	uint32_t output_width = 0;
 	uint32_t output_height = 0;
 
-	virtual ~NGXDLSSContext() {
+	void release_features() {
 		if (dlss_rr_handle) {
 			NVSDK_NGX_VULKAN_ReleaseFeature(dlss_rr_handle);
 			dlss_rr_handle = nullptr;
@@ -620,6 +621,11 @@ public:
 			NVSDK_NGX_VULKAN_ReleaseFeature(dlss_sr_handle);
 			dlss_sr_handle = nullptr;
 		}
+		feature_created = false;
+	}
+
+	virtual ~NGXDLSSContext() {
+		release_features();
 	}
 };
 } // namespace RendererRD
@@ -925,7 +931,14 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 	bool use_dlss_rr = p_params.dlss_rr && g_ngx_dlss_rr_available;
 
-	// Create NGX feature on first use
+	// Recreate feature if mode changed (RR <-> SR)
+	if (ctx->feature_created && ctx->feature_is_rr != use_dlss_rr) {
+		print_line(vformat("[NGX DLSS] Mode changed (%s -> %s), recreating feature",
+				ctx->feature_is_rr ? "RR" : "SR", use_dlss_rr ? "RR" : "SR"));
+		ctx->release_features();
+	}
+
+	// Create NGX feature on first use or after mode change
 	if (!ctx->feature_created) {
 		NVSDK_NGX_Result result;
 
@@ -937,6 +950,8 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			dlssd_create.InTargetWidth = ctx->output_width;
 			dlssd_create.InTargetHeight = ctx->output_height;
 			dlssd_create.InPerfQualityValue = ctx->perf_quality;
+			// AutoExposure ON: Streamline reference uses AutoExposure when no
+			// exposure texture is provided. The pathtracer has no exposure texture.
 			dlssd_create.InFeatureCreateFlags =
 					NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
 					NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
@@ -949,6 +964,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 			if (NVSDK_NGX_SUCCEED(result)) {
 				ctx->feature_created = true;
+				ctx->feature_is_rr = true;
 				print_line("[NGX DLSS] DLSS-RR feature created successfully");
 			} else {
 				WARN_PRINT(vformat("[NGX DLSS] DLSS-RR creation failed (0x%x), falling back to DLSS-SR", (uint32_t)result));
@@ -980,6 +996,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 				return;
 			}
 			ctx->feature_created = true;
+			ctx->feature_is_rr = false;
 			use_dlss_rr = false;
 			print_line("[NGX DLSS] DLSS-SR feature created successfully");
 		}
@@ -1008,7 +1025,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		eval.InRenderSubrectDimensions.Width = ctx->render_width;
 		eval.InRenderSubrectDimensions.Height = ctx->render_height;
 		eval.InReset = p_params.reset_accumulation ? 1 : 0;
-		// Motion vectors are in UV space (0-1), DLSS expects pixel space — scale by render resolution
+		// Motion vectors are in UV space (0-1), scale to pixel space for DLSS
 		eval.InMVScaleX = (float)ctx->render_width;
 		eval.InMVScaleY = (float)ctx->render_height;
 		eval.InFrameTimeDeltaInMsec = p_params.delta_time * 1000.0f;
@@ -1077,9 +1094,12 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		eval.InRenderSubrectDimensions.Width = ctx->render_width;
 		eval.InRenderSubrectDimensions.Height = ctx->render_height;
 		eval.InReset = p_params.reset_accumulation ? 1 : 0;
-		// Motion vectors are in UV space (0-1), DLSS expects pixel space — scale by render resolution
+		// Motion vectors are in UV space (0-1), scale to pixel space for DLSS
 		eval.InMVScaleX = (float)ctx->render_width;
 		eval.InMVScaleY = (float)ctx->render_height;
+		eval.InFrameTimeDeltaInMsec = p_params.delta_time * 1000.0f;
+		eval.InPreExposure = 1.0f;
+		eval.InExposureScale = 1.0f;
 
 		NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSS_EXT(vk_cmd, ctx->dlss_sr_handle, g_ngx_params, &eval);
 		if (NVSDK_NGX_FAILED(result)) {
