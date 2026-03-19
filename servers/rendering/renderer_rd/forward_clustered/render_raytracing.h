@@ -183,6 +183,8 @@ struct RTCacheEntry {
 	uint32_t cached_rid_version = 0;
 	uint8_t failed_attempts = 0;
 	uint64_t size_bytes = 0;
+	bool is_skinned = false;
+	uint64_t last_skeleton_version = 0;
 };
 
 struct RTMaterialCacheEntry {

@@ -297,6 +297,10 @@ RTSurfaceData *RenderRaytracing::process_surface(
 
 	RTSurfaceData *surf_data = entry->ptr;
 
+	// Detect skinned mesh (has animated vertex buffer from skeleton compute)
+	entry->is_skinned = surf->owner->mesh_instance.is_valid() &&
+			mesh_storage->mesh_instance_get_skeleton_version(surf->owner->mesh_instance) > 0;
+
 	// Get vertex/index arrays for BLAS creation
 	SceneShaderForwardClustered::ShaderData *shader_data = surf->shader;
 	bool emulate_point_size = shader_data->uses_point_size && owner->scene_shader.emulate_point_size;

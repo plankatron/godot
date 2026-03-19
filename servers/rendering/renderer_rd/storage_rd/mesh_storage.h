@@ -582,6 +582,12 @@ public:
 		s->version_lock.unlock();
 	}
 
+	_FORCE_INLINE_ uint64_t mesh_instance_get_skeleton_version(RID p_mesh_instance) {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		ERR_FAIL_NULL_V(mi, 0);
+		return mi->skeleton_version;
+	}
+
 	_FORCE_INLINE_ void mesh_instance_surface_get_vertex_arrays_and_format(RID p_mesh_instance, uint64_t p_surface_index, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
 		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 		ERR_FAIL_NULL(mi);
