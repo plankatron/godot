@@ -268,6 +268,15 @@ RTSurfaceData *RenderRaytracing::process_surface(
 			entry->cached_rid_version != mesh_version ||
 			entry->cached_counter != p_surface_invalidation_counter;
 
+	// Force BLAS rebuild when skeleton animates
+	if (!needs_refresh && entry->is_skinned && entry->ptr->blas.is_valid()) {
+		uint64_t skel_ver = mesh_storage->mesh_instance_get_skeleton_version(surf->owner->mesh_instance);
+		if (skel_ver != entry->last_skeleton_version) {
+			entry->last_skeleton_version = skel_ver;
+			needs_refresh = true;
+		}
+	}
+
 	if (!needs_refresh && entry->ptr->blas.is_valid()) {
 		// Cache hit - reuse existing BLAS
 		cache_hits++;
