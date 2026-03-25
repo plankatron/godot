@@ -1518,6 +1518,11 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		if (enabled_device_extension_names.has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
 			device_functions.CreateRaytracingPipelinesKHR = PFN_vkCreateRayTracingPipelinesKHR(functions.GetDeviceProcAddr(vk_device, "vkCreateRayTracingPipelinesKHR"));
 		}
+
+		if (enabled_device_extension_names.has(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
+			device_functions.GetClusterAccelerationStructureBuildSizesNV = PFN_vkGetClusterAccelerationStructureBuildSizesNV(functions.GetDeviceProcAddr(vk_device, "vkGetClusterAccelerationStructureBuildSizesNV"));
+			device_functions.CmdBuildClusterAccelerationStructureIndirectNV = PFN_vkCmdBuildClusterAccelerationStructureIndirectNV(functions.GetDeviceProcAddr(vk_device, "vkCmdBuildClusterAccelerationStructureIndirectNV"));
+		}
 	}
 
 	return OK;
@@ -6436,6 +6441,380 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create_from_devic
 	accel_info->external_device_address = (VkDeviceAddress)p_device_address;
 	accel_info->scratch_size = 0;
 	accel_info->scratch_alignment = 0;
+	return AccelerationStructureID(accel_info);
+#else
+	return AccelerationStructureID();
+#endif
+}
+
+RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
+		const float *p_positions, uint32_t p_position_count,
+		const uint8_t *p_indices, uint32_t p_index_count,
+		const int32_t *p_descriptors, uint32_t p_meshlet_count,
+		uint32_t p_max_vertices, uint32_t p_max_triangles) {
+#if VULKAN_RAYTRACING_ENABLED
+	if (!device_functions.GetClusterAccelerationStructureBuildSizesNV ||
+		!device_functions.CmdBuildClusterAccelerationStructureIndirectNV ||
+		!acceleration_structure_capabilities.cluster_acceleration_structure_support) {
+		return AccelerationStructureID();
+	}
+
+	// ---- Step 1: Pack meshlet vertex/index data into contiguous GPU buffers ----
+
+	struct ClusterLayout {
+		uint32_t vertex_offset;
+		uint32_t index_offset;
+		uint32_t vertex_count;
+		uint32_t triangle_count;
+	};
+	LocalVector<ClusterLayout> layouts;
+	layouts.resize(p_meshlet_count);
+
+	VkDeviceSize total_vertex_bytes = 0;
+	VkDeviceSize total_index_bytes = 0;
+	uint32_t total_tris = 0;
+	uint32_t total_verts = 0;
+
+	for (uint32_t c = 0; c < p_meshlet_count; c++) {
+		uint32_t vert_off = p_descriptors[c * 4 + 0];
+		uint32_t tri_off = p_descriptors[c * 4 + 1];
+		uint32_t vert_cnt = p_descriptors[c * 4 + 2];
+		uint32_t tri_cnt = p_descriptors[c * 4 + 3];
+
+		layouts[c].vertex_offset = (uint32_t)total_vertex_bytes;
+		layouts[c].index_offset = (uint32_t)total_index_bytes;
+		layouts[c].vertex_count = vert_cnt;
+		layouts[c].triangle_count = tri_cnt;
+
+		total_vertex_bytes += vert_cnt * 3 * sizeof(float);
+		total_index_bytes += tri_cnt * 3;
+		total_tris += tri_cnt;
+		total_verts += vert_cnt;
+	}
+	total_index_bytes = (total_index_bytes + 3) & ~3; // align to 4
+
+	// Pack vertex positions (dereference meshlet_vertices into positions)
+	LocalVector<float> packed_verts;
+	packed_verts.resize(total_vertex_bytes / sizeof(float));
+	LocalVector<uint8_t> packed_indices;
+	packed_indices.resize(total_index_bytes);
+	memset(packed_indices.ptr(), 0, total_index_bytes);
+
+	for (uint32_t c = 0; c < p_meshlet_count; c++) {
+		uint32_t vert_off = p_descriptors[c * 4 + 0];
+		uint32_t tri_off = p_descriptors[c * 4 + 1];
+		uint32_t vert_cnt = p_descriptors[c * 4 + 2];
+		uint32_t tri_cnt = p_descriptors[c * 4 + 3];
+
+		float *dst_v = &packed_verts[layouts[c].vertex_offset / sizeof(float)];
+		for (uint32_t v = 0; v < vert_cnt * 3; v++) {
+			dst_v[v] = p_positions[vert_off * 3 + v];
+		}
+
+		uint8_t *dst_i = &packed_indices[layouts[c].index_offset];
+		for (uint32_t t = 0; t < tri_cnt * 3; t++) {
+			dst_i[t] = p_indices[tri_off + t];
+		}
+	}
+
+	// ---- Step 2: Create GPU buffers and upload ----
+
+	struct GpuBuf {
+		VkBuffer buffer = VK_NULL_HANDLE;
+		VkDeviceMemory memory = VK_NULL_HANDLE;
+		VkDeviceAddress address = 0;
+		VkDeviceSize size = 0;
+	};
+
+	VkBufferUsageFlags input_usage =
+		VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+	auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_flags, const void *data) -> GpuBuf {
+		GpuBuf gb = {};
+		gb.size = size;
+
+		VkBufferCreateInfo buf_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+		buf_info.size = size;
+		buf_info.usage = usage;
+		vkCreateBuffer(vk_device, &buf_info, nullptr, &gb.buffer);
+
+		VkMemoryRequirements mem_req;
+		vkGetBufferMemoryRequirements(vk_device, gb.buffer, &mem_req);
+
+		VkMemoryAllocateInfo alloc_info = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+		alloc_info.allocationSize = mem_req.size;
+
+		VkPhysicalDeviceMemoryProperties mem_props;
+		vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+		for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
+			if ((mem_req.memoryTypeBits & (1 << i)) &&
+				(mem_props.memoryTypes[i].propertyFlags & mem_flags) == mem_flags) {
+				alloc_info.memoryTypeIndex = i;
+				break;
+			}
+		}
+
+		VkMemoryAllocateFlagsInfo flags_info = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
+		flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+		alloc_info.pNext = &flags_info;
+
+		vkAllocateMemory(vk_device, &alloc_info, nullptr, &gb.memory);
+		vkBindBufferMemory(vk_device, gb.buffer, gb.memory, 0);
+
+		VkBufferDeviceAddressInfo addr_info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+		addr_info.buffer = gb.buffer;
+		gb.address = vkGetBufferDeviceAddress(vk_device, &addr_info);
+
+		if (data) {
+			void *mapped;
+			vkMapMemory(vk_device, gb.memory, 0, size, 0, &mapped);
+			memcpy(mapped, data, size);
+			vkUnmapMemory(vk_device, gb.memory);
+		}
+		return gb;
+	};
+
+	auto free_buf = [&](GpuBuf &gb) {
+		if (gb.buffer) vkDestroyBuffer(vk_device, gb.buffer, nullptr);
+		if (gb.memory) vkFreeMemory(vk_device, gb.memory, nullptr);
+		gb = {};
+	};
+
+	VkMemoryPropertyFlags host_visible = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	VkMemoryPropertyFlags device_local = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+	GpuBuf vertex_buf = make_buffer(total_vertex_bytes, input_usage, host_visible, packed_verts.ptr());
+	GpuBuf index_buf = make_buffer(total_index_bytes, input_usage, host_visible, packed_indices.ptr());
+
+	// ---- Step 3: Build per-cluster infos ----
+
+	LocalVector<VkClusterAccelerationStructureBuildTriangleClusterInfoNV> build_infos;
+	build_infos.resize(p_meshlet_count);
+
+	for (uint32_t c = 0; c < p_meshlet_count; c++) {
+		auto &info = build_infos[c];
+		memset(&info, 0, sizeof(info));
+		info.clusterID = c;
+		info.triangleCount = layouts[c].triangle_count;
+		info.vertexCount = layouts[c].vertex_count;
+		info.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_8BIT_NV;
+		info.indexBufferStride = sizeof(uint8_t);
+		info.indexBuffer = index_buf.address + layouts[c].index_offset;
+		info.vertexBufferStride = sizeof(float) * 3;
+		info.vertexBuffer = vertex_buf.address + layouts[c].vertex_offset;
+		info.positionTruncateBitCount = 0;
+		info.baseGeometryIndexAndGeometryFlags.geometryFlags =
+			VK_CLUSTER_ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT_NV;
+	}
+
+	VkDeviceSize info_buf_size = p_meshlet_count * sizeof(VkClusterAccelerationStructureBuildTriangleClusterInfoNV);
+	GpuBuf info_buf = make_buffer(info_buf_size, input_usage, host_visible, build_infos.ptr());
+
+	// ---- Step 4: Host query for IMPLICIT_DESTINATIONS sizes ----
+
+	VkClusterAccelerationStructureTriangleClusterInputNV cluster_input = {};
+	cluster_input.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_TRIANGLE_CLUSTER_INPUT_NV;
+	cluster_input.maxClusterTriangleCount = p_max_triangles;
+	cluster_input.maxClusterVertexCount = p_max_vertices;
+	cluster_input.maxClusterUniqueGeometryCount = 1;
+	cluster_input.maxGeometryIndexValue = 0;
+	cluster_input.minPositionTruncateBitCount = 0;
+	cluster_input.maxTotalTriangleCount = total_tris;
+	cluster_input.maxTotalVertexCount = total_verts;
+	cluster_input.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+
+	VkClusterAccelerationStructureInputInfoNV input_info = {};
+	input_info.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
+	input_info.maxAccelerationStructureCount = p_meshlet_count;
+	input_info.opInput.pTriangleClusters = &cluster_input;
+	input_info.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_TRIANGLE_CLUSTER_NV;
+	input_info.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
+
+	VkAccelerationStructureBuildSizesInfoKHR sizes_info = {};
+	sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+	device_functions.GetClusterAccelerationStructureBuildSizesNV(vk_device, &input_info, &sizes_info);
+
+	if (sizes_info.accelerationStructureSize == 0) {
+		free_buf(vertex_buf);
+		free_buf(index_buf);
+		free_buf(info_buf);
+		return AccelerationStructureID();
+	}
+
+	// ---- Step 5: Allocate output buffers ----
+
+	VkBufferUsageFlags clas_usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+		VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+	GpuBuf clas_buf = make_buffer(sizes_info.accelerationStructureSize, clas_usage, device_local, nullptr);
+	GpuBuf scratch = make_buffer(sizes_info.buildScratchSize > 0 ? sizes_info.buildScratchSize : 256,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, device_local, nullptr);
+
+	VkDeviceSize addr_buf_size = p_meshlet_count * sizeof(VkDeviceAddress);
+	GpuBuf addr_buf = make_buffer(addr_buf_size, input_usage, host_visible, nullptr);
+
+	VkDeviceSize sizes_buf_size = p_meshlet_count * sizeof(uint32_t);
+	GpuBuf sizes_buf = make_buffer(sizes_buf_size, input_usage, host_visible, nullptr);
+
+	// ---- Step 6: Build CLAS (IMPLICIT_DESTINATIONS) ----
+
+	uint32_t clas_queue_family = 0;
+	VkQueue clas_queue = queue_families[0][0].queue;
+
+	VkCommandPoolCreateInfo pool_info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+	pool_info.queueFamilyIndex = clas_queue_family;
+	pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	VkCommandPool cmd_pool;
+	vkCreateCommandPool(vk_device, &pool_info, nullptr, &cmd_pool);
+
+	VkCommandBufferAllocateInfo cmd_alloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	cmd_alloc.commandPool = cmd_pool;
+	cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cmd_alloc.commandBufferCount = 1;
+	VkCommandBuffer cmd;
+	vkAllocateCommandBuffers(vk_device, &cmd_alloc, &cmd);
+
+	VkCommandBufferBeginInfo begin_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	vkBeginCommandBuffer(cmd, &begin_info);
+
+	VkClusterAccelerationStructureCommandsInfoNV cmd_info = {};
+	cmd_info.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+	cmd_info.input = input_info;
+	cmd_info.dstImplicitData = clas_buf.address;
+	cmd_info.srcInfosArray.deviceAddress = info_buf.address;
+	cmd_info.srcInfosArray.size = info_buf_size;
+	cmd_info.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureBuildTriangleClusterInfoNV);
+	cmd_info.dstAddressesArray.deviceAddress = addr_buf.address;
+	cmd_info.dstAddressesArray.size = addr_buf_size;
+	cmd_info.dstAddressesArray.stride = sizeof(VkDeviceAddress);
+	cmd_info.dstSizesArray.deviceAddress = sizes_buf.address;
+	cmd_info.dstSizesArray.size = sizes_buf_size;
+	cmd_info.dstSizesArray.stride = sizeof(uint32_t);
+	cmd_info.scratchData = scratch.address;
+
+	device_functions.CmdBuildClusterAccelerationStructureIndirectNV(cmd, &cmd_info);
+
+	// Barrier: CLAS write → BLAS read
+	VkMemoryBarrier barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+	barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+	barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_HOST_READ_BIT;
+	vkCmdPipelineBarrier(cmd,
+		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_HOST_BIT,
+		0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+	vkEndCommandBuffer(cmd);
+
+	VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &cmd;
+	vkQueueSubmit(clas_queue, 1, &submit, VK_NULL_HANDLE);
+	vkQueueWaitIdle(clas_queue);
+
+	// ---- Step 7: Build BLAS from CLAS (IMPLICIT_DESTINATIONS) ----
+
+	// Query BLAS sizes
+	VkClusterAccelerationStructureClustersBottomLevelInputNV blas_input = {};
+	blas_input.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_CLUSTERS_BOTTOM_LEVEL_INPUT_NV;
+	blas_input.maxTotalClusterCount = p_meshlet_count;
+	blas_input.maxClusterCountPerAccelerationStructure = p_meshlet_count;
+
+	VkClusterAccelerationStructureInputInfoNV blas_info_nv = {};
+	blas_info_nv.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
+	blas_info_nv.maxAccelerationStructureCount = 1;
+	blas_info_nv.opInput.pClustersBottomLevel = &blas_input;
+	blas_info_nv.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_CLUSTERS_BOTTOM_LEVEL_NV;
+	blas_info_nv.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
+
+	VkAccelerationStructureBuildSizesInfoKHR blas_sizes = {};
+	blas_sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+	device_functions.GetClusterAccelerationStructureBuildSizesNV(vk_device, &blas_info_nv, &blas_sizes);
+
+	GpuBuf blas_buf = make_buffer(blas_sizes.accelerationStructureSize,
+		VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		device_local, nullptr);
+
+	// BLAS build info references the CLAS cluster addresses (written by CLAS build into addr_buf)
+	VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV blas_build = {};
+	blas_build.clusterReferencesCount = p_meshlet_count;
+	blas_build.clusterReferencesStride = sizeof(VkDeviceAddress);
+	blas_build.clusterReferences = addr_buf.address;
+
+	GpuBuf blas_build_buf = make_buffer(sizeof(blas_build), input_usage, host_visible, &blas_build);
+	GpuBuf blas_dst = make_buffer(sizeof(VkDeviceAddress), input_usage, host_visible, nullptr);
+	GpuBuf blas_size = make_buffer(sizeof(uint32_t), input_usage, host_visible, nullptr);
+
+	// Reuse scratch if large enough, otherwise reallocate
+	if (blas_sizes.buildScratchSize > scratch.size) {
+		free_buf(scratch);
+		scratch = make_buffer(blas_sizes.buildScratchSize,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			device_local, nullptr);
+	}
+
+	vkBeginCommandBuffer(cmd, &begin_info);
+
+	VkClusterAccelerationStructureCommandsInfoNV blas_cmd = {};
+	blas_cmd.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+	blas_cmd.input = blas_info_nv;
+	blas_cmd.dstImplicitData = blas_buf.address;
+	blas_cmd.srcInfosArray.deviceAddress = blas_build_buf.address;
+	blas_cmd.srcInfosArray.size = sizeof(blas_build);
+	blas_cmd.srcInfosArray.stride = sizeof(blas_build);
+	blas_cmd.dstAddressesArray.deviceAddress = blas_dst.address;
+	blas_cmd.dstAddressesArray.size = sizeof(VkDeviceAddress);
+	blas_cmd.dstAddressesArray.stride = sizeof(VkDeviceAddress);
+	blas_cmd.dstSizesArray.deviceAddress = blas_size.address;
+	blas_cmd.dstSizesArray.size = sizeof(uint32_t);
+	blas_cmd.dstSizesArray.stride = sizeof(uint32_t);
+	blas_cmd.scratchData = scratch.address;
+
+	device_functions.CmdBuildClusterAccelerationStructureIndirectNV(cmd, &blas_cmd);
+
+	vkEndCommandBuffer(cmd);
+	vkQueueSubmit(clas_queue, 1, &submit, VK_NULL_HANDLE);
+	vkQueueWaitIdle(clas_queue);
+
+	// Read back BLAS device address from host-visible output buffer
+	VkDeviceAddress blas_device_address = 0;
+	{
+		void *mapped;
+		vkMapMemory(vk_device, blas_dst.memory, 0, sizeof(VkDeviceAddress), 0, &mapped);
+		memcpy(&blas_device_address, mapped, sizeof(VkDeviceAddress));
+		vkUnmapMemory(vk_device, blas_dst.memory);
+	}
+
+	// ---- Cleanup ----
+	// Free temporary buffers (CLAS and BLAS buffers must persist)
+	free_buf(vertex_buf);
+	free_buf(index_buf);
+	free_buf(info_buf);
+	free_buf(scratch);
+	free_buf(addr_buf);
+	free_buf(sizes_buf);
+	free_buf(blas_build_buf);
+	free_buf(blas_dst);
+	free_buf(blas_size);
+	vkDestroyCommandPool(vk_device, cmd_pool, nullptr);
+
+	// Create AccelerationStructureInfo wrapping the BLAS address.
+	// clas_buf and blas_buf persist — they're referenced by the TLAS via the device address.
+	// TODO: Store clas_buf/blas_buf GpuBuf in AccelerationStructureInfo for proper cleanup.
+	AccelerationStructureInfo *accel_info = VersatileResource::allocate<AccelerationStructureInfo>(resources_allocator);
+	memset(&accel_info->geometry, 0, sizeof(accel_info->geometry));
+	memset(&accel_info->build_info, 0, sizeof(accel_info->build_info));
+	memset(&accel_info->range_info, 0, sizeof(accel_info->range_info));
+	accel_info->external_device_address = blas_device_address;
+	accel_info->scratch_size = 0;
+	accel_info->scratch_alignment = 0;
+
+	print_verbose(vformat("[CLAS] Built %d clusters, %d tris -> BLAS addr=%llu", p_meshlet_count, total_tris, blas_device_address));
+
 	return AccelerationStructureID(accel_info);
 #else
 	return AccelerationStructureID();

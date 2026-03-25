@@ -335,6 +335,32 @@ RID RenderingDevice::blas_create_from_device_address(uint64_t p_device_address) 
 	return id;
 }
 
+RID RenderingDevice::clas_blas_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles) {
+	uint32_t meshlet_count = p_descriptors.size() / 4;
+	ERR_FAIL_COND_V_MSG(meshlet_count == 0, RID(), "No meshlet descriptors provided.");
+	ERR_FAIL_COND_V_MSG(p_positions.is_empty(), RID(), "No positions provided.");
+	ERR_FAIL_COND_V_MSG(p_indices.is_empty(), RID(), "No indices provided.");
+
+	AccelerationStructure acceleration_structure;
+	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BLAS;
+	acceleration_structure.driver_id = driver->clas_blas_create(
+		p_positions.ptr(), p_positions.size(),
+		p_indices.ptr(), p_indices.size(),
+		p_descriptors.ptr(), meshlet_count,
+		p_max_vertices, p_max_triangles);
+	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create CLAS-backed BLAS.");
+
+	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
+	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
+	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
+
+	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
+#ifdef DEV_ENABLED
+	set_resource_name(id, "RID:" + itos(id.get_id()));
+#endif
+	return id;
+}
+
 void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform) {
 	RendererSceneRenderImplementation::RenderRaytracing::inject_external_blas(p_blas, p_transform);
 }
@@ -8450,6 +8476,7 @@ void RenderingDevice::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("blas_create", "vertex_array", "index_array", "geometry_bits", "position_attribute_location"), &RenderingDevice::blas_create, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("blas_create_from_device_address", "device_address"), &RenderingDevice::blas_create_from_device_address);
+	ClassDB::bind_method(D_METHOD("clas_blas_create", "positions", "indices", "descriptors", "max_vertices", "max_triangles"), &RenderingDevice::clas_blas_create);
 	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform"), &RenderingDevice::rt_inject_external_blas);
 	ClassDB::bind_method(D_METHOD("rt_clear_injected_blas"), &RenderingDevice::rt_clear_injected_blas);
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_create", "instance_count", "creation_bits"), &RenderingDevice::tlas_instances_buffer_create, DEFVAL(0));
