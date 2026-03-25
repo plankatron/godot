@@ -250,6 +250,15 @@ class RenderRaytracing {
 	void finalize_buffers();
 
 public:
+	// External BLAS injection (for GDExtensions that build their own CLAS/BLAS).
+	struct InjectedBLAS {
+		RID blas;
+		Transform3D transform;
+	};
+	static void inject_external_blas(const RID &p_blas, const Transform3D &p_transform);
+	static void clear_injected_blas();
+	static LocalVector<InjectedBLAS> s_injected_blas;
+
 	void initialize(RenderForwardClustered *p_owner);
 
 	void cleanup_caches();

@@ -6427,6 +6427,21 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(BufferID p
 #endif
 }
 
+RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create_from_device_address(uint64_t p_device_address) {
+#if VULKAN_RAYTRACING_ENABLED
+	AccelerationStructureInfo *accel_info = VersatileResource::allocate<AccelerationStructureInfo>(resources_allocator);
+	memset(&accel_info->geometry, 0, sizeof(accel_info->geometry));
+	memset(&accel_info->build_info, 0, sizeof(accel_info->build_info));
+	memset(&accel_info->range_info, 0, sizeof(accel_info->range_info));
+	accel_info->external_device_address = (VkDeviceAddress)p_device_address;
+	accel_info->scratch_size = 0;
+	accel_info->scratch_alignment = 0;
+	return AccelerationStructureID(accel_info);
+#else
+	return AccelerationStructureID();
+#endif
+}
+
 #if VULKAN_RAYTRACING_ENABLED
 static _FORCE_INLINE_ void _store_transform_transposed_3x4(const Transform3D &p_mtx, VkTransformMatrixKHR &r_mtx) {
 	r_mtx.matrix[0][0] = p_mtx.basis.rows[0][0];
@@ -6471,7 +6486,9 @@ void RenderingDeviceDriverVulkan::tlas_instances_buffer_fill(BufferID p_instance
 		_store_transform_transposed_3x4(p_transforms[i], instance.transform);
 		instance.instanceCustomIndex = i;
 		instance.mask = 0xFF;
-		instance.accelerationStructureReference = buffer_get_device_address(blas_info->buffer);
+		instance.accelerationStructureReference = blas_info->external_device_address
+			? blas_info->external_device_address
+			: buffer_get_device_address(blas_info->buffer);
 		instance.instanceShaderBindingTableRecordOffset = (p_sbt_offsets.size() == blases_count) ? p_sbt_offsets[i] : 0;
 
 		// Map per-instance flags to Vulkan flags.

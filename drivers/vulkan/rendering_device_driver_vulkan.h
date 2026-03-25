@@ -730,9 +730,14 @@ public:
 		LocalVector<VkAccelerationStructureInstanceKHR> instances;
 		VkAccelerationStructureBuildGeometryInfoKHR build_info;
 		VkAccelerationStructureBuildRangeInfoKHR range_info;
+
+		// External BLAS: device address from a CLAS-backed BLAS built outside Godot.
+		// When non-zero, tlas_instances_buffer_fill uses this instead of buffer address.
+		VkDeviceAddress external_device_address = 0;
 	};
 
 	virtual AccelerationStructureID blas_create(BufferID p_vertex_buffer, uint64_t p_vertex_offset, VertexFormatID p_vertex_format, uint32_t p_vertex_count, uint32_t p_position_attribute_location, BufferID p_index_buffer, IndexBufferFormat p_index_format, uint64_t p_index_offset_bytes, uint32_t p_index_count, BitField<AccelerationStructureGeometryBits> p_geometry_bits) override final;
+	virtual AccelerationStructureID blas_create_from_device_address(uint64_t p_device_address) override final;
 	virtual uint32_t tlas_instances_buffer_get_size_bytes(uint32_t p_instance_count) override final;
 	virtual void tlas_instances_buffer_fill(BufferID p_instances_buffer, VectorView<AccelerationStructureID> p_blases, VectorView<Transform3D> p_transforms, VectorView<uint32_t> p_instance_flags = VectorView<uint32_t>(), VectorView<uint32_t> p_sbt_offsets = VectorView<uint32_t>()) override final;
 	virtual AccelerationStructureID tlas_create(BufferID p_instances_buffer, uint32_t p_instance_count) override final;

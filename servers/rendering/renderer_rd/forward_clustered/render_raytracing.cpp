@@ -43,6 +43,17 @@
 
 using namespace RendererSceneRenderImplementation;
 
+// Static member for external BLAS injection (GDExtensions with CLAS-backed terrain, etc.)
+LocalVector<RenderRaytracing::InjectedBLAS> RenderRaytracing::s_injected_blas;
+
+void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform) {
+	s_injected_blas.push_back({ p_blas, p_transform });
+}
+
+void RenderRaytracing::clear_injected_blas() {
+	s_injected_blas.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -1253,7 +1264,26 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 
 	SceneShaderRaytracing::get_singleton()->finalize_custom_shaders();
 
-	// Build acceleration structures
+	// Append externally injected BLAS (CLAS-backed terrain, etc.)
+	for (const InjectedBLAS &ext : s_injected_blas) {
+		blass.push_back(ext.blas);
+		blas_transforms.push_back(ext.transform);
+		instance_flags.push_back(0); // default flags
+		sbt_offsets.push_back(0);    // default material hit group
+
+		// Default geometry/material data for external BLAS (opaque terrain).
+		RT_GeometryData geo = {};
+		geometry_data.push_back(geo);
+		RT_MaterialData mat = {};
+		mat.base_color[0] = 0.5f;
+		mat.base_color[1] = 0.5f;
+		mat.base_color[2] = 0.5f;
+		mat.roughness = 0.8f;
+		mat.metallic = 0.0f;
+		material_data.push_back(mat);
+	}
+
+	// Build acceleration structures (skips external BLAS — already built)
 	build_acceleration_structures(dirty_blas_list);
 
 	// Create GPU buffers

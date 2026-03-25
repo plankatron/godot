@@ -314,6 +314,26 @@ RID RenderingDevice::blas_create(RID p_vertex_array, RID p_index_array, BitField
 	return id;
 }
 
+RID RenderingDevice::blas_create_from_device_address(uint64_t p_device_address) {
+	ERR_FAIL_COND_V_MSG(p_device_address == 0, RID(), "External BLAS device address cannot be zero.");
+
+	AccelerationStructure acceleration_structure;
+	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BLAS;
+	acceleration_structure.driver_id = driver->blas_create_from_device_address(p_device_address);
+	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create external BLAS.");
+
+	// External BLAS: no vertex/index arrays, no build needed.
+	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
+	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
+	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
+
+	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
+#ifdef DEV_ENABLED
+	set_resource_name(id, "RID:" + itos(id.get_id()));
+#endif
+	return id;
+}
+
 BitField<RDD::BufferUsageBits> RenderingDevice::_creation_to_usage_bits(BitField<RD::BufferCreationBits> p_creation_bits) {
 	BitField<RDD::BufferUsageBits> usage = 0;
 
@@ -436,6 +456,11 @@ Error RenderingDevice::acceleration_structure_build(RID p_acceleration_structure
 	ERR_FAIL_NULL_V_MSG(accel, ERR_INVALID_PARAMETER, "Acceleration structure argument is not valid.");
 
 	uint64_t scratch_size = driver->acceleration_structure_get_scratch_size_bytes(accel->driver_id);
+
+	// External BLAS (e.g., CLAS-backed) is already built — nothing to do.
+	if (scratch_size == 0) {
+		return OK;
+	}
 
 	if (accel->scratch_buffer) {
 		uint64_t scratch_buffer_size = driver->buffer_get_allocation_size(accel->scratch_buffer);
