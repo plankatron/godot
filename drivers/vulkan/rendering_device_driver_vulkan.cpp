@@ -6813,7 +6813,8 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 	accel_info->scratch_size = 0;
 	accel_info->scratch_alignment = 0;
 
-	print_verbose(vformat("[CLAS] Built %d clusters, %d tris -> BLAS addr=%llu", p_meshlet_count, total_tris, blas_device_address));
+	print_line(String("[CLAS] Built ") + itos(p_meshlet_count) + " clusters, " + itos(total_tris) +
+		" tris -> BLAS addr=" + itos(blas_device_address) + " clas_addr=" + itos(clas_buf.address));
 
 	return AccelerationStructureID(accel_info);
 #else

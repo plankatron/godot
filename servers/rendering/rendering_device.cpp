@@ -361,6 +361,17 @@ RID RenderingDevice::clas_blas_create(const PackedFloat32Array &p_positions, con
 	return id;
 }
 
+uint64_t RenderingDevice::rt_queue_clas_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles) {
+	return RendererSceneRenderImplementation::RenderRaytracing::queue_clas_build(
+		p_positions, p_indices, p_descriptors, p_transform, p_max_vertices, p_max_triangles);
+}
+
+void RenderingDevice::rt_free_clas(uint64_t p_id) {
+	RendererSceneRenderImplementation::RenderRaytracing::free_clas_blas(p_id);
+}
+
 void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform) {
 	RendererSceneRenderImplementation::RenderRaytracing::inject_external_blas(p_blas, p_transform);
 }
@@ -8477,6 +8488,8 @@ void RenderingDevice::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("blas_create", "vertex_array", "index_array", "geometry_bits", "position_attribute_location"), &RenderingDevice::blas_create, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("blas_create_from_device_address", "device_address"), &RenderingDevice::blas_create_from_device_address);
 	ClassDB::bind_method(D_METHOD("clas_blas_create", "positions", "indices", "descriptors", "max_vertices", "max_triangles"), &RenderingDevice::clas_blas_create);
+	ClassDB::bind_method(D_METHOD("rt_queue_clas_build", "positions", "indices", "descriptors", "transform", "max_vertices", "max_triangles"), &RenderingDevice::rt_queue_clas_build);
+	ClassDB::bind_method(D_METHOD("rt_free_clas", "id"), &RenderingDevice::rt_free_clas);
 	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform"), &RenderingDevice::rt_inject_external_blas);
 	ClassDB::bind_method(D_METHOD("rt_clear_injected_blas"), &RenderingDevice::rt_clear_injected_blas);
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_create", "instance_count", "creation_bits"), &RenderingDevice::tlas_instances_buffer_create, DEFVAL(0));

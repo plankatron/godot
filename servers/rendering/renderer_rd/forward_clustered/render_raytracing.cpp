@@ -43,8 +43,13 @@
 
 using namespace RendererSceneRenderImplementation;
 
-// Static member for external BLAS injection (GDExtensions with CLAS-backed terrain, etc.)
+// Static members for external BLAS injection and deferred CLAS builds.
 LocalVector<RenderRaytracing::InjectedBLAS> RenderRaytracing::s_injected_blas;
+Mutex RenderRaytracing::s_pending_clas_mutex;
+LocalVector<RenderRaytracing::PendingCLAS> RenderRaytracing::s_pending_clas;
+HashMap<uint64_t, RenderRaytracing::CLASEntry> RenderRaytracing::s_clas_blas_rids;
+
+static uint64_t s_next_clas_id = 1;
 
 void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform) {
 	s_injected_blas.push_back({ p_blas, p_transform });
@@ -52,6 +57,59 @@ void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D
 
 void RenderRaytracing::clear_injected_blas() {
 	s_injected_blas.clear();
+}
+
+uint64_t RenderRaytracing::queue_clas_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles) {
+	MutexLock lock(s_pending_clas_mutex);
+	uint64_t id = s_next_clas_id++;
+	PendingCLAS entry;
+	entry.positions = p_positions;
+	entry.indices = p_indices;
+	entry.descriptors = p_descriptors;
+	entry.transform = p_transform;
+	entry.max_vertices = p_max_vertices;
+	entry.max_triangles = p_max_triangles;
+	entry.id = id;
+	s_pending_clas.push_back(entry);
+	return id;
+}
+
+void RenderRaytracing::free_clas_blas(uint64_t p_id) {
+	MutexLock lock(s_pending_clas_mutex);
+	if (s_clas_blas_rids.has(p_id)) {
+		CLASEntry &entry = s_clas_blas_rids[p_id];
+		if (entry.blas.is_valid()) {
+			RD::get_singleton()->free_rid(entry.blas);
+		}
+		s_clas_blas_rids.erase(p_id);
+	}
+}
+
+void RenderRaytracing::process_pending_clas() {
+	// Called from build_tlas() on the render thread — safe to do Vulkan operations.
+	MutexLock lock(s_pending_clas_mutex);
+
+	// Build pending CLAS
+	for (const PendingCLAS &entry : s_pending_clas) {
+		RID blas = RD::get_singleton()->clas_blas_create(
+			entry.positions, entry.indices, entry.descriptors,
+			entry.max_vertices, entry.max_triangles);
+		if (blas.is_valid()) {
+			s_clas_blas_rids[entry.id] = { blas, entry.transform };
+			print_line(vformat("[CLAS] Built BLAS id=%d meshlets=%d", entry.id, entry.descriptors.size() / 4));
+		}
+	}
+	s_pending_clas.clear();
+
+	// Re-inject all persistent CLAS BLAS into TLAS every frame
+	// DISABLED for crash isolation — uncomment when CLAS build is verified stable
+	// for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
+	// 	if (kv.value.blas.is_valid()) {
+	// 		s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
+	// 	}
+	// }
 }
 
 // ---------------------------------------------------------------------------
@@ -1263,6 +1321,9 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 #endif
 
 	SceneShaderRaytracing::get_singleton()->finalize_custom_shaders();
+
+	// Process deferred CLAS builds (from main thread, now safe on render thread)
+	process_pending_clas();
 
 	// Append externally injected BLAS (CLAS-backed terrain, etc.)
 	for (const InjectedBLAS &ext : s_injected_blas) {

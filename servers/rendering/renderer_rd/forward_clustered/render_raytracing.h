@@ -259,6 +259,31 @@ public:
 	static void clear_injected_blas();
 	static LocalVector<InjectedBLAS> s_injected_blas;
 
+	// Deferred CLAS build queue — main thread queues meshlet data,
+	// render thread builds CLAS/BLAS during build_tlas().
+	struct PendingCLAS {
+		PackedFloat32Array positions;
+		PackedByteArray indices;
+		PackedInt32Array descriptors;
+		Transform3D transform;
+		int max_vertices;
+		int max_triangles;
+		uint64_t id; // unique per chunk, for lifecycle management
+	};
+	static Mutex s_pending_clas_mutex;
+	static LocalVector<PendingCLAS> s_pending_clas;
+	struct CLASEntry {
+		RID blas;
+		Transform3D transform;
+	};
+	static HashMap<uint64_t, CLASEntry> s_clas_blas_rids; // built BLAS by chunk id
+
+	static uint64_t queue_clas_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles);
+	static void free_clas_blas(uint64_t p_id);
+	static void process_pending_clas(); // called from build_tlas on render thread
+
 	void initialize(RenderForwardClustered *p_owner);
 
 	void cleanup_caches();
