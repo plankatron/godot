@@ -609,6 +609,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	if (Engine::get_singleton()->is_raytracing_validation_enabled()) {
 		_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
 	}
+	_register_requested_device_extension(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_NV_MESH_SHADER_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_SPIRV_1_4_EXTENSION_NAME, false);
 
@@ -970,6 +972,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 		VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
+		VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
 
 		const bool use_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 		if (use_1_2_features) {
@@ -1040,6 +1043,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 			acceleration_structure_features.pNext = next_features;
 			next_features = &acceleration_structure_features;
+		}
+
+		if (enabled_device_extension_names.has(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
+			clas_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+			clas_features.pNext = next_features;
+			next_features = &clas_features;
 		}
 
 		if (enabled_device_extension_names.has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
@@ -1178,6 +1187,10 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 
 		if (enabled_device_extension_names.has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
 			acceleration_structure_capabilities.acceleration_structure_support = acceleration_structure_features.accelerationStructure;
+		}
+
+		if (enabled_device_extension_names.has(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
+			acceleration_structure_capabilities.cluster_acceleration_structure_support = clas_features.clusterAccelerationStructure;
 		}
 
 		if (enabled_device_extension_names.has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
@@ -1615,6 +1628,14 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		print_line("Vulkan: NVIDIA ray tracing validation enabled; messages are printed as Vulkan validation errors, annotated with the acceleration structures they reference.");
 	} else if (Engine::get_singleton()->is_raytracing_validation_enabled()) {
 		WARN_PRINT("Vulkan: --raytracing-validation was requested, but the driver doesn't expose VK_NV_ray_tracing_validation.");
+	}
+
+	VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
+	if (acceleration_structure_capabilities.cluster_acceleration_structure_support) {
+		clas_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+		clas_features.pNext = create_info_next;
+		clas_features.clusterAccelerationStructure = VK_TRUE;
+		create_info_next = &clas_features;
 	}
 
 	VkPhysicalDeviceVulkan11Features vulkan_1_1_features = {};
