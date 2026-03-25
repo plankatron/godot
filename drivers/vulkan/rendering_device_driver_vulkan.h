@@ -98,6 +98,7 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 	struct AccelerationStructureCapabilities {
 		bool acceleration_structure_support = false;
 		uint32_t min_acceleration_structure_scratch_offset_alignment = 0;
+		bool cluster_acceleration_structure_support = false;
 	};
 
 	struct RaytracingCapabilities {
