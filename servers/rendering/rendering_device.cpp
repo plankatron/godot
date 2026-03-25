@@ -30,6 +30,7 @@
 
 #include "rendering_device.h"
 #include "rendering_device.compat.inc"
+#include "renderer_rd/forward_clustered/render_raytracing.h"
 
 #include "rendering_device_binds.h"
 #include "shader_include_db.h"
@@ -332,6 +333,14 @@ RID RenderingDevice::blas_create_from_device_address(uint64_t p_device_address) 
 	set_resource_name(id, "RID:" + itos(id.get_id()));
 #endif
 	return id;
+}
+
+void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform) {
+	RendererSceneRenderImplementation::RenderRaytracing::inject_external_blas(p_blas, p_transform);
+}
+
+void RenderingDevice::rt_clear_injected_blas() {
+	RendererSceneRenderImplementation::RenderRaytracing::clear_injected_blas();
 }
 
 BitField<RDD::BufferUsageBits> RenderingDevice::_creation_to_usage_bits(BitField<RD::BufferCreationBits> p_creation_bits) {
@@ -8440,6 +8449,9 @@ void RenderingDevice::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("raytracing_pipeline_is_valid", "raytracing_pipeline"), &RenderingDevice::raytracing_pipeline_is_valid);
 
 	ClassDB::bind_method(D_METHOD("blas_create", "vertex_array", "index_array", "geometry_bits", "position_attribute_location"), &RenderingDevice::blas_create, DEFVAL(0), DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("blas_create_from_device_address", "device_address"), &RenderingDevice::blas_create_from_device_address);
+	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform"), &RenderingDevice::rt_inject_external_blas);
+	ClassDB::bind_method(D_METHOD("rt_clear_injected_blas"), &RenderingDevice::rt_clear_injected_blas);
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_create", "instance_count", "creation_bits"), &RenderingDevice::tlas_instances_buffer_create, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_fill", "instances_buffer", "blases", "transforms"), &RenderingDevice::_tlas_instances_buffer_fill);
 	ClassDB::bind_method(D_METHOD("tlas_create", "instances_buffer"), &RenderingDevice::tlas_create);

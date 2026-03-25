@@ -1275,9 +1275,10 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 		RT_GeometryData geo = {};
 		geometry_data.push_back(geo);
 		RT_MaterialData mat = {};
-		mat.base_color[0] = 0.5f;
-		mat.base_color[1] = 0.5f;
-		mat.base_color[2] = 0.5f;
+		mat.albedo_color[0] = 0.5f;
+		mat.albedo_color[1] = 0.5f;
+		mat.albedo_color[2] = 0.5f;
+		mat.albedo_color[3] = 1.0f;
 		mat.roughness = 0.8f;
 		mat.metallic = 0.0f;
 		material_data.push_back(mat);

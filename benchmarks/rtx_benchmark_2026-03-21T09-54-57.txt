@@ -1,0 +1,19 @@
+RTX Benchmark Results — 2026-03-21T09:54:57
+Scene: global_illumination demo
+
+Configuration                             Avg FPS   Avg ms   P1% ms   P50 ms   P99 ms Frames
+----------------------------------------------------------------------------------------------------
+Rasterized (Forward+)                       567.1      1.8      1.7      1.8      1.9   1702
+RT 1spp 1bounce NO DLSS                     262.2      3.8      3.7      3.8      4.2    787
+RT 1spp 2bounce NO DLSS                      97.3     10.3     10.0     10.3     10.4    293
+RT 1spp 3bounce NO DLSS                      76.0     13.2     13.0     13.3     13.3    228
+RT 1spp 4bounce NO DLSS                      70.9     14.1     13.6     14.3     14.7    213
+RT 2spp 2bounce NO DLSS                      32.5     30.8     30.0     31.0     31.6     98
+RT 4spp 2bounce NO DLSS                      13.8     72.4     42.6     72.2    109.5     42
+RT 1spp 1b SR Perf 50%                      171.8      5.8      5.6      5.8      6.1    516
+RT 1spp 1b SR Quality 67%                   188.9      5.3      5.0      5.3      5.6    567
+RT 1spp 2b SR Perf 50%                      125.1      8.0      7.6      8.0      8.3    376
+RT 1spp 1b RR Perf 50%                       77.7     12.9     12.5     13.0     13.0    233
+RT 1spp 1b RR Quality 67%                    42.4     23.6     23.3     23.6     23.6    128
+RT 1spp 1b RR DLAA native                    19.6     51.0     27.3     50.8     84.5     59
+RT 2spp 2b RR Perf 50%                       45.1     22.2     18.8     22.1     22.6    136
