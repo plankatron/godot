@@ -1319,15 +1319,12 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 	// Process deferred CLAS builds (from main thread, now safe on render thread)
 	process_pending_clas();
 
-	// Re-inject persistent CLAS BLAS into TLAS.
-	// DISABLED: Cluster BLAS data produced by clas_blas_create is invalid for ray traversal.
-	// The injection path itself works (verified with known-good scene BLAS duplicate).
-	// Bug is in clas_blas_create build parameters — needs validation layer debugging.
-	// for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
-	// 	if (kv.value.blas.is_valid()) {
-	// 		s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
-	// 	}
-	// }
+	// Re-inject persistent CLAS BLAS into TLAS (re-enabled for validation layer debugging)
+	for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
+		if (kv.value.blas.is_valid()) {
+			s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
+		}
+	}
 
 	// Append externally injected BLAS (CLAS-backed terrain, etc.)
 	for (const InjectedBLAS &ext : s_injected_blas) {
