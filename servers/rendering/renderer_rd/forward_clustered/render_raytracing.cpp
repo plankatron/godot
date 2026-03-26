@@ -104,12 +104,11 @@ void RenderRaytracing::process_pending_clas() {
 	s_pending_clas.clear();
 
 	// Re-inject all persistent CLAS BLAS into TLAS every frame
-	// DISABLED for crash isolation — uncomment when CLAS build is verified stable
-	// for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
-	// 	if (kv.value.blas.is_valid()) {
-	// 		s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
-	// 	}
-	// }
+	for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
+		if (kv.value.blas.is_valid()) {
+			s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

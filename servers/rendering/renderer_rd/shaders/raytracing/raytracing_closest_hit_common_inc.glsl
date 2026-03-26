@@ -28,7 +28,26 @@ struct HitData {
 HitData compute_hit_data() {
 	HitData h;
 	h.geometry_idx = gl_InstanceCustomIndexEXT;
+	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+	h.is_front_face = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
+
 	GeometryData geom = geometries[h.geometry_idx];
+
+	// CLAS hit: vertex_address == 0 means cluster-backed BLAS with no per-vertex data.
+	// Use ray direction as approximate normal. Phase 2 adds proper cluster metadata.
+	if (geom.vertex_address == 0ul) {
+		h.geometry_normal = -normalize(gl_WorldRayDirectionEXT);
+		if (!h.is_front_face) {
+			h.geometry_normal = -h.geometry_normal;
+		}
+		h.tangent = normalize(cross(h.geometry_normal, vec3(0.0, 1.0, 0.0)));
+		if (dot(h.tangent, h.tangent) < 0.001) {
+			h.tangent = normalize(cross(h.geometry_normal, vec3(1.0, 0.0, 0.0)));
+		}
+		h.bitangent = cross(h.geometry_normal, h.tangent);
+		h.uv = vec2(0.0);
+		return h;
+	}
 
 	VertexAttributes attrs = fetch_vertex_attributes(geom, attribs, true, true);
 	h.uv = attrs.uv;
@@ -43,12 +62,9 @@ HitData compute_hit_data() {
 	h.tangent = normalize(normal_matrix * attrs.tangent);
 	h.bitangent = cross(h.geometry_normal, h.tangent) * attrs.bitangent_sign;
 
-	h.is_front_face = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
 	if (!h.is_front_face) {
 		h.geometry_normal = -h.geometry_normal;
 	}
-
-	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
 	return h;
 }

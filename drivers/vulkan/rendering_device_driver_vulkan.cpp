@@ -7078,6 +7078,15 @@ RDD::RaytracingPipelineID RenderingDeviceDriverVulkan::raytracing_pipeline_creat
 	pipeline_create_info.maxPipelineRayRecursionDepth = p_settings.max_recursion_depth;
 	pipeline_create_info.pLibraryInterface = &interface_info;
 
+	// Enable CLAS support in the RT pipeline if the device supports it.
+	VkRayTracingPipelineClusterAccelerationStructureCreateInfoNV clas_pipeline_info = {};
+	if (acceleration_structure_capabilities.cluster_acceleration_structure_support) {
+		clas_pipeline_info.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CLUSTER_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
+		clas_pipeline_info.allowClusterAccelerationStructure = VK_TRUE;
+		clas_pipeline_info.pNext = const_cast<void *>(pipeline_create_info.pNext);
+		pipeline_create_info.pNext = &clas_pipeline_info;
+	}
+
 	RaytracingPipelineInfo *rpi = VersatileResource::allocate<RaytracingPipelineInfo>(resources_allocator);
 
 	VkResult err = vkCreateRayTracingPipelinesKHR(vk_device, VK_NULL_HANDLE, pipelines_cache.vk_cache, 1, &pipeline_create_info, nullptr, &rpi->vk_pipeline);
