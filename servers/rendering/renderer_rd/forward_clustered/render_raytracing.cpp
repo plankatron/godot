@@ -103,12 +103,7 @@ void RenderRaytracing::process_pending_clas() {
 	}
 	s_pending_clas.clear();
 
-	// Re-inject all persistent CLAS BLAS into TLAS every frame
-	for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
-		if (kv.value.blas.is_valid()) {
-			s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
-		}
-	}
+	// CLAS TLAS injection disabled — debugging build sequence
 }
 
 // ---------------------------------------------------------------------------
@@ -1324,11 +1319,21 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 	// Process deferred CLAS builds (from main thread, now safe on render thread)
 	process_pending_clas();
 
+	// Re-inject persistent CLAS BLAS into TLAS.
+	// DISABLED: Cluster BLAS data produced by clas_blas_create is invalid for ray traversal.
+	// The injection path itself works (verified with known-good scene BLAS duplicate).
+	// Bug is in clas_blas_create build parameters — needs validation layer debugging.
+	// for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
+	// 	if (kv.value.blas.is_valid()) {
+	// 		s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
+	// 	}
+	// }
+
 	// Append externally injected BLAS (CLAS-backed terrain, etc.)
 	for (const InjectedBLAS &ext : s_injected_blas) {
 		blass.push_back(ext.blas);
 		blas_transforms.push_back(ext.transform);
-		instance_flags.push_back(0); // default flags
+		instance_flags.push_back(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE); // skip any-hit shader
 		sbt_offsets.push_back(0);    // default material hit group
 
 		// Default geometry/material data for external BLAS (opaque terrain).

@@ -6459,6 +6459,24 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 		return AccelerationStructureID();
 	}
 
+	// ---- DEBUG: Override with hardcoded triangle to isolate BLAS validity ----
+	static bool use_debug_triangle = true;
+
+	float debug_verts[] = { 0,0,0, 10,0,0, 0,10,0 };
+	uint8_t debug_indices[] = { 0, 1, 2 };
+	int32_t debug_desc[] = { 0, 0, 3, 1 }; // vert_off=0, tri_off=0, vert_cnt=3, tri_cnt=1
+
+	if (use_debug_triangle) {
+		p_positions = debug_verts;
+		p_position_count = 9;
+		p_indices = debug_indices;
+		p_index_count = 4; // aligned to 4
+		p_descriptors = debug_desc;
+		p_meshlet_count = 1;
+		p_max_vertices = 64;
+		p_max_triangles = 128;
+	}
+
 	// ---- Step 1: Pack meshlet vertex/index data into contiguous GPU buffers ----
 
 	struct ClusterLayout {
