@@ -6928,6 +6928,26 @@ void RenderingDeviceDriverVulkan::_acceleration_structure_create(VkAccelerationS
 #endif
 }
 
+void RenderingDeviceDriverVulkan::_clas_build_data_free(CLASBuildData *p_bd) {
+	auto free_vk = [&](VkBuffer &buf, VkDeviceMemory &mem) {
+		if (buf) { vkDestroyBuffer(vk_device, buf, nullptr); buf = VK_NULL_HANDLE; }
+		if (mem) { vkFreeMemory(vk_device, mem, nullptr); mem = VK_NULL_HANDLE; }
+	};
+	free_vk(p_bd->vertex_buf, p_bd->vertex_mem);
+	free_vk(p_bd->index_buf, p_bd->index_mem);
+	free_vk(p_bd->info_buf, p_bd->info_mem);
+	free_vk(p_bd->clas_buf, p_bd->clas_mem);
+	free_vk(p_bd->scratch_buf, p_bd->scratch_mem);
+	free_vk(p_bd->addr_buf, p_bd->addr_mem);
+	free_vk(p_bd->sizes_buf, p_bd->sizes_mem);
+	free_vk(p_bd->blas_buf, p_bd->blas_mem);
+	free_vk(p_bd->blas_scratch_buf, p_bd->blas_scratch_mem);
+	free_vk(p_bd->blas_build_buf, p_bd->blas_build_mem);
+	free_vk(p_bd->blas_dst_buf, p_bd->blas_dst_mem);
+	free_vk(p_bd->blas_size_buf, p_bd->blas_size_mem);
+	memdelete(p_bd);
+}
+
 void RenderingDeviceDriverVulkan::acceleration_structure_free(AccelerationStructureID p_acceleration_structure) {
 #if VULKAN_RAYTRACING_ENABLED
 	AccelerationStructureInfo *accel_info = (AccelerationStructureInfo *)p_acceleration_structure.id;
@@ -6940,6 +6960,10 @@ void RenderingDeviceDriverVulkan::acceleration_structure_free(AccelerationStruct
 	}
 	if (accel_info->vk_acceleration_structure) {
 		vkDestroyAccelerationStructureKHR(vk_device, accel_info->vk_acceleration_structure, nullptr);
+	}
+	if (accel_info->clas_build_data) {
+		_clas_build_data_free(accel_info->clas_build_data);
+		accel_info->clas_build_data = nullptr;
 	}
 	VersatileResource::free(resources_allocator, accel_info);
 #endif

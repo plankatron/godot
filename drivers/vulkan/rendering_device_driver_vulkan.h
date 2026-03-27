@@ -790,6 +790,7 @@ public:
 
 private:
 	void _acceleration_structure_create(VkAccelerationStructureTypeKHR p_type, VkAccelerationStructureBuildSizesInfoKHR p_size_info, AccelerationStructureInfo *r_accel_info);
+	void _clas_build_data_free(CLASBuildData *p_bd);
 
 public:
 	// ----- COMMANDS -----
