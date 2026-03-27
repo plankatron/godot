@@ -716,6 +716,33 @@ public:
 
 	// ----- ACCELERATION STRUCTURE -----
 
+	// Persistent CLAS collection — all DAG levels built once, per-frame BLAS from subset.
+	struct CLASCollection {
+		// Persistent GPU buffers (vertex/index/cluster data for ALL meshlets across all LOD levels)
+		VkBuffer vertex_buf = VK_NULL_HANDLE;
+		VkDeviceMemory vertex_mem = VK_NULL_HANDLE;
+		VkBuffer index_buf = VK_NULL_HANDLE;
+		VkDeviceMemory index_mem = VK_NULL_HANDLE;
+		VkBuffer info_buf = VK_NULL_HANDLE;
+		VkDeviceMemory info_mem = VK_NULL_HANDLE;
+		VkBuffer clas_buf = VK_NULL_HANDLE;  // CLAS output (all clusters)
+		VkDeviceMemory clas_mem = VK_NULL_HANDLE;
+		VkBuffer scratch_buf = VK_NULL_HANDLE;
+		VkDeviceMemory scratch_mem = VK_NULL_HANDLE;
+		VkBuffer addr_buf = VK_NULL_HANDLE;  // per-cluster device addresses (host-visible for readback)
+		VkDeviceMemory addr_mem = VK_NULL_HANDLE;
+		VkBuffer sizes_buf = VK_NULL_HANDLE;
+		VkDeviceMemory sizes_mem = VK_NULL_HANDLE;
+		// Per-cluster addresses (read back after build, used for per-frame BLAS subset)
+		LocalVector<VkDeviceAddress> cluster_addresses;
+		uint32_t cluster_count = 0;
+		bool built = false; // true after GPU build has executed and addresses read back
+		// Deferred build command info (replayed once by command_build_clas_collection)
+		VkClusterAccelerationStructureCommandsInfoNV clas_cmd_info = {};
+		VkClusterAccelerationStructureInputInfoNV clas_input_info = {};
+		VkClusterAccelerationStructureTriangleClusterInputNV cluster_input = {};
+	};
+
 	// Deferred CLAS build data — stored in AccelerationStructureInfo, replayed by command_build_clas.
 	struct CLASBuildData {
 		VkClusterAccelerationStructureCommandsInfoNV clas_cmd_info;
@@ -787,6 +814,15 @@ public:
 	virtual AccelerationStructureID tlas_create(BufferID p_instances_buffer, uint32_t p_instance_count) override final;
 	virtual void acceleration_structure_free(AccelerationStructureID p_acceleration_structure) override final;
 	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) override final;
+
+	// CLAS collection: build all DAG levels at once, then per-frame subset BLAS.
+	CLASCollection *clas_collection_create(const float *p_positions, uint32_t p_position_count,
+		const uint8_t *p_indices, uint32_t p_index_count,
+		const int32_t *p_descriptors, uint32_t p_meshlet_count,
+		uint32_t p_max_vertices, uint32_t p_max_triangles);
+	AccelerationStructureID clas_subset_blas_create(CLASCollection *p_collection,
+		const uint32_t *p_selected_indices, uint32_t p_selected_count);
+	void clas_collection_free(CLASCollection *p_collection);
 
 private:
 	void _acceleration_structure_create(VkAccelerationStructureTypeKHR p_type, VkAccelerationStructureBuildSizesInfoKHR p_size_info, AccelerationStructureInfo *r_accel_info);
