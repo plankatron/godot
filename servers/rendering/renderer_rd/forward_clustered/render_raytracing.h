@@ -284,6 +284,38 @@ public:
 	static void free_clas_blas(uint64_t p_id);
 	static void process_pending_clas(); // called from build_tlas on render thread
 
+	// CLAS Collection: all DAG levels built once, per-frame subset BLAS.
+	struct PendingCLASCollection {
+		PackedFloat32Array positions;
+		PackedByteArray indices;
+		PackedInt32Array descriptors;
+		Transform3D transform;
+		int max_vertices;
+		int max_triangles;
+		uint64_t id;
+	};
+	struct CLASCollectionEntry {
+		void *collection = nullptr; // CLASCollection* (opaque, driver-specific)
+		RID current_blas;           // per-frame subset BLAS (rebuilt on LOD change)
+		Transform3D transform;
+		PackedInt32Array selected_indices; // current LOD selection
+		bool needs_rebuild = false;
+		bool clas_built = false;    // true after GPU has executed CLAS build
+		RID clas_build_blas;        // dummy BLAS used to trigger CLAS build via draw_graph
+	};
+	static LocalVector<PendingCLASCollection> s_pending_collections;
+	static HashMap<uint64_t, CLASCollectionEntry> s_clas_collections;
+
+	// Queue a CLAS collection build (all DAG meshlets at once). Returns ID.
+	static uint64_t queue_clas_collection_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles);
+	// Update LOD selection for a collection. Triggers subset BLAS rebuild.
+	static void update_clas_collection_selection(uint64_t p_id, const PackedInt32Array &p_selected_indices);
+	// Free a collection and its resources.
+	static void free_clas_collection(uint64_t p_id);
+	static void process_pending_collections(); // called from build_tlas
+
 	void initialize(RenderForwardClustered *p_owner);
 
 	void cleanup_caches();

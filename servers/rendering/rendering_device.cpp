@@ -31,6 +31,7 @@
 #include "rendering_device.h"
 #include "rendering_device.compat.inc"
 #include "renderer_rd/forward_clustered/render_raytracing.h"
+#include "drivers/vulkan/rendering_device_driver_vulkan.h"
 
 #include "rendering_device_binds.h"
 #include "shader_include_db.h"
@@ -370,6 +371,70 @@ uint64_t RenderingDevice::rt_queue_clas_build(const PackedFloat32Array &p_positi
 
 void RenderingDevice::rt_free_clas(uint64_t p_id) {
 	RendererSceneRenderImplementation::RenderRaytracing::free_clas_blas(p_id);
+}
+
+void *RenderingDevice::clas_collection_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles) {
+	uint32_t meshlet_count = p_descriptors.size() / 4;
+	ERR_FAIL_COND_V_MSG(meshlet_count == 0, nullptr, "No meshlet descriptors.");
+	auto *vk_driver = static_cast<RenderingDeviceDriverVulkan *>(driver);
+	return vk_driver->clas_collection_create(
+		p_positions.ptr(), p_positions.size(), p_indices.ptr(), p_indices.size(),
+		p_descriptors.ptr(), meshlet_count, p_max_vertices, p_max_triangles);
+}
+
+bool RenderingDevice::clas_collection_readback_addresses(void *p_collection) {
+	if (!p_collection) return false;
+	auto *vk_driver = static_cast<RenderingDeviceDriverVulkan *>(driver);
+	return vk_driver->clas_collection_readback_addresses(
+		static_cast<RenderingDeviceDriverVulkan::CLASCollection *>(p_collection));
+}
+
+RID RenderingDevice::clas_subset_blas_create(void *p_collection, const PackedInt32Array &p_selected_indices) {
+	if (!p_collection || p_selected_indices.is_empty()) return RID();
+	auto *coll = static_cast<RenderingDeviceDriverVulkan::CLASCollection *>(p_collection);
+	if (!coll->built) return RID();
+
+	auto *vk_driver = static_cast<RenderingDeviceDriverVulkan *>(driver);
+	LocalVector<uint32_t> indices;
+	indices.resize(p_selected_indices.size());
+	for (int i = 0; i < p_selected_indices.size(); i++) {
+		indices[i] = static_cast<uint32_t>(p_selected_indices[i]);
+	}
+
+	AccelerationStructure acceleration_structure;
+	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BLAS;
+	acceleration_structure.driver_id = vk_driver->clas_subset_blas_create(
+		coll, indices.ptr(), indices.size());
+	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create subset BLAS.");
+
+	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
+	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
+	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
+
+	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
+	return id;
+}
+
+void RenderingDevice::clas_collection_free(void *p_collection) {
+	if (!p_collection) return;
+	auto *vk_driver = static_cast<RenderingDeviceDriverVulkan *>(driver);
+	vk_driver->clas_collection_free(static_cast<RenderingDeviceDriverVulkan::CLASCollection *>(p_collection));
+}
+
+uint64_t RenderingDevice::rt_queue_clas_collection_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles) {
+	return RendererSceneRenderImplementation::RenderRaytracing::queue_clas_collection_build(
+		p_positions, p_indices, p_descriptors, p_transform, p_max_vertices, p_max_triangles);
+}
+
+void RenderingDevice::rt_update_clas_collection_selection(uint64_t p_id, const PackedInt32Array &p_selected_indices) {
+	RendererSceneRenderImplementation::RenderRaytracing::update_clas_collection_selection(p_id, p_selected_indices);
+}
+
+void RenderingDevice::rt_free_clas_collection(uint64_t p_id) {
+	RendererSceneRenderImplementation::RenderRaytracing::free_clas_collection(p_id);
 }
 
 void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform) {

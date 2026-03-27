@@ -1331,8 +1331,15 @@ public:
 	RID blas_create(RID p_vertex_array, RID p_index_array, BitField<AccelerationStructureGeometryBits> p_geometry_bits = 0, uint32_t p_position_attribute_location = 0);
 	RID blas_create_from_device_address(uint64_t p_device_address);
 	RID clas_blas_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles);
+	void *clas_collection_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles);
+	bool clas_collection_readback_addresses(void *p_collection);
+	RID clas_subset_blas_create(void *p_collection, const PackedInt32Array &p_selected_indices);
+	void clas_collection_free(void *p_collection);
 	uint64_t rt_queue_clas_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, const Transform3D &p_transform, int p_max_vertices, int p_max_triangles);
+	uint64_t rt_queue_clas_collection_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, const Transform3D &p_transform, int p_max_vertices, int p_max_triangles);
+	void rt_update_clas_collection_selection(uint64_t p_id, const PackedInt32Array &p_selected_indices);
 	void rt_free_clas(uint64_t p_id);
+	void rt_free_clas_collection(uint64_t p_id);
 	void rt_inject_external_blas(RID p_blas, const Transform3D &p_transform);
 	void rt_clear_injected_blas();
 	RID tlas_instances_buffer_create(uint32_t p_instance_count, BitField<BufferCreationBits> p_creation_bits = 0);

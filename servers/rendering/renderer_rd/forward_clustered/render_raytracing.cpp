@@ -48,6 +48,8 @@ LocalVector<RenderRaytracing::InjectedBLAS> RenderRaytracing::s_injected_blas;
 Mutex RenderRaytracing::s_pending_clas_mutex;
 LocalVector<RenderRaytracing::PendingCLAS> RenderRaytracing::s_pending_clas;
 HashMap<uint64_t, RenderRaytracing::CLASEntry> RenderRaytracing::s_clas_blas_rids;
+LocalVector<RenderRaytracing::PendingCLASCollection> RenderRaytracing::s_pending_collections;
+HashMap<uint64_t, RenderRaytracing::CLASCollectionEntry> RenderRaytracing::s_clas_collections;
 
 static uint64_t s_next_clas_id = 1;
 
@@ -105,6 +107,112 @@ void RenderRaytracing::process_pending_clas() {
 		}
 	}
 	s_pending_clas.clear();
+}
+
+// ============================================================================
+// CLAS Collection: all DAG levels at once, per-frame subset BLAS
+// ============================================================================
+
+uint64_t RenderRaytracing::queue_clas_collection_build(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices,
+		const PackedInt32Array &p_descriptors, const Transform3D &p_transform,
+		int p_max_vertices, int p_max_triangles) {
+	MutexLock lock(s_pending_clas_mutex);
+	uint64_t id = s_next_clas_id++;
+	PendingCLASCollection entry;
+	entry.positions = p_positions;
+	entry.indices = p_indices;
+	entry.descriptors = p_descriptors;
+	entry.transform = p_transform;
+	entry.max_vertices = p_max_vertices;
+	entry.max_triangles = p_max_triangles;
+	entry.id = id;
+	s_pending_collections.push_back(entry);
+	return id;
+}
+
+void RenderRaytracing::update_clas_collection_selection(uint64_t p_id, const PackedInt32Array &p_selected_indices) {
+	MutexLock lock(s_pending_clas_mutex);
+	if (s_clas_collections.has(p_id)) {
+		auto &entry = s_clas_collections[p_id];
+		entry.selected_indices = p_selected_indices;
+		entry.needs_rebuild = true;
+	}
+}
+
+void RenderRaytracing::free_clas_collection(uint64_t p_id) {
+	MutexLock lock(s_pending_clas_mutex);
+	if (s_clas_collections.has(p_id)) {
+		auto &entry = s_clas_collections[p_id];
+		if (entry.current_blas.is_valid()) {
+			RD::get_singleton()->free_rid(entry.current_blas);
+		}
+		if (entry.clas_build_blas.is_valid()) {
+			RD::get_singleton()->free_rid(entry.clas_build_blas);
+		}
+		// Collection GPU resources freed via driver
+		if (entry.collection) {
+			RD::get_singleton()->clas_collection_free(entry.collection);
+		}
+		s_clas_collections.erase(p_id);
+	}
+}
+
+void RenderRaytracing::process_pending_collections() {
+	MutexLock lock(s_pending_clas_mutex);
+
+	// 1. Build new collections (CLAS for all meshlets — one-time)
+	for (const PendingCLASCollection &entry : s_pending_collections) {
+		void *coll = RD::get_singleton()->clas_collection_create(
+			entry.positions, entry.indices, entry.descriptors,
+			entry.max_vertices, entry.max_triangles);
+		if (coll) {
+			// Use the existing clas_blas_create to build CLAS+BLAS for ALL meshlets initially.
+			// This triggers the CLAS build via draw_graph. The cluster addresses will be
+			// readable next frame (addr_buf is host-visible).
+			RID initial_blas = RD::get_singleton()->clas_blas_create(
+				entry.positions, entry.indices, entry.descriptors,
+				entry.max_vertices, entry.max_triangles);
+			if (initial_blas.is_valid()) {
+				RD::get_singleton()->clas_blas_build(initial_blas);
+			}
+			CLASCollectionEntry ce;
+			ce.collection = coll;
+			ce.current_blas = initial_blas;
+			ce.transform = entry.transform;
+			ce.clas_built = false;
+			s_clas_collections[entry.id] = ce;
+		}
+	}
+	s_pending_collections.clear();
+
+	// 2. Check collections that need address readback (CLAS built last frame)
+	for (KeyValue<uint64_t, CLASCollectionEntry> &kv : s_clas_collections) {
+		auto &entry = kv.value;
+		if (!entry.clas_built && entry.collection) {
+			// Try to read back cluster addresses from the collection's addr_buf
+			bool ok = RD::get_singleton()->clas_collection_readback_addresses(entry.collection);
+			if (ok) {
+				entry.clas_built = true;
+			}
+		}
+	}
+
+	// 3. Rebuild subset BLAS for collections with changed LOD selection
+	for (KeyValue<uint64_t, CLASCollectionEntry> &kv : s_clas_collections) {
+		auto &entry = kv.value;
+		if (!entry.needs_rebuild || !entry.clas_built || entry.selected_indices.is_empty()) continue;
+		entry.needs_rebuild = false;
+
+		// Build lightweight BLAS from selected cluster addresses
+		RID subset_blas = RD::get_singleton()->clas_subset_blas_create(
+			entry.collection, entry.selected_indices);
+		if (subset_blas.is_valid()) {
+			RD::get_singleton()->clas_blas_build(subset_blas);
+			// Replace current BLAS (old one will be freed next frame via deferred cleanup)
+			// TODO: deferred free of old BLAS
+			entry.current_blas = subset_blas;
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,11 +1437,19 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 
 	// Process deferred CLAS builds (from main thread, now safe on render thread)
 	process_pending_clas();
+	process_pending_collections();
 
-	// Re-inject persistent CLAS BLAS into TLAS
+	// Re-inject persistent CLAS BLAS into TLAS (old per-chunk path)
 	for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
 		if (kv.value.blas.is_valid()) {
 			s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
+		}
+	}
+
+	// Re-inject collection BLAS into TLAS (new all-levels path)
+	for (const KeyValue<uint64_t, CLASCollectionEntry> &kv : s_clas_collections) {
+		if (kv.value.current_blas.is_valid()) {
+			s_injected_blas.push_back({ kv.value.current_blas, kv.value.transform });
 		}
 	}
 
@@ -1341,7 +1457,8 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 	for (const InjectedBLAS &ext : s_injected_blas) {
 		blass.push_back(ext.blas);
 		blas_transforms.push_back(ext.transform);
-		instance_flags.push_back(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE); // skip any-hit shader
+		instance_flags.push_back(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE |
+			RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE);
 		sbt_offsets.push_back(0);    // default material hit group
 
 		// Default geometry/material data for external BLAS (opaque terrain).
