@@ -1339,6 +1339,7 @@ public:
 	void tlas_instances_buffer_fill(RID p_buffer, const Vector<RID> &p_blases, VectorView<Transform3D> p_transforms, VectorView<uint32_t> p_instance_flags = VectorView<uint32_t>(), VectorView<uint32_t> p_sbt_offsets = VectorView<uint32_t>());
 	RID tlas_create(RID p_instances_buffer);
 	Error acceleration_structure_build(RID p_acceleration_structure);
+	Error clas_blas_build(RID p_acceleration_structure);
 
 	/*************************/
 	/**** DRAW LISTS (II) ****/

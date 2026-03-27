@@ -38,6 +38,8 @@
 
 #include "thirdparty/misc/smolv.h"
 
+#include <cstdio> // CLAS binary dump diagnostic
+
 #if defined(STREAMLINE_ENABLED)
 #include "drivers/streamline/streamline.h"
 #endif
@@ -2969,7 +2971,13 @@ void RenderingDeviceDriverVulkan::command_pipeline_barrier(
 		vk_accel_barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		vk_accel_barriers[i].srcAccessMask = src_access;
 		vk_accel_barriers[i].dstAccessMask = dst_access;
-		vk_accel_barriers[i].buffer = ((const BufferInfo *)accel_info->buffer.id)->vk_buffer;
+		if (accel_info->buffer.id) {
+			vk_accel_barriers[i].buffer = ((const BufferInfo *)accel_info->buffer.id)->vk_buffer;
+		} else {
+			// CLAS-backed BLAS: no Godot-managed buffer. Use a global memory barrier instead.
+			// The command_build_clas function handles its own internal barriers.
+			vk_accel_barriers[i].buffer = VK_NULL_HANDLE;
+		}
 		vk_accel_barriers[i].offset = p_acceleration_structure_barriers[i].offset;
 		vk_accel_barriers[i].size = p_acceleration_structure_barriers[i].size;
 	}
@@ -6459,24 +6467,6 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 		return AccelerationStructureID();
 	}
 
-	// ---- DEBUG: Override with hardcoded triangle to isolate BLAS validity ----
-	static bool use_debug_triangle = true;
-
-	float debug_verts[] = { 0,0,0, 10,0,0, 0,10,0 };
-	uint8_t debug_indices[] = { 0, 1, 2 };
-	int32_t debug_desc[] = { 0, 0, 3, 1 }; // vert_off=0, tri_off=0, vert_cnt=3, tri_cnt=1
-
-	if (use_debug_triangle) {
-		p_positions = debug_verts;
-		p_position_count = 9;
-		p_indices = debug_indices;
-		p_index_count = 4; // aligned to 4
-		p_descriptors = debug_desc;
-		p_meshlet_count = 1;
-		p_max_vertices = 64;
-		p_max_triangles = 128;
-	}
-
 	// ---- Step 1: Pack meshlet vertex/index data into contiguous GPU buffers ----
 
 	struct ClusterLayout {
@@ -6677,65 +6667,47 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 	VkDeviceSize sizes_buf_size = p_meshlet_count * sizeof(uint32_t);
 	GpuBuf sizes_buf = make_buffer(sizes_buf_size, input_usage, host_visible, nullptr);
 
-	// ---- Step 6: Build CLAS (IMPLICIT_DESTINATIONS) ----
+	// ---- Step 6: Store CLAS+BLAS build commands for deferred execution via draw_graph ----
+	// NO vkQueueSubmit here — any queue submission during draw_graph frame recording crashes.
+	// Instead, store the build command infos and let command_build_clas() replay them
+	// into the draw_graph's command buffer during frame execution.
 
-	uint32_t clas_queue_family = 0;
-	VkQueue clas_queue = queue_families[0][0].queue;
+	// Allocate deferred build data — will be replayed by command_build_clas()
+	CLASBuildData *bd = memnew(CLASBuildData);
+	memset(bd, 0, sizeof(CLASBuildData));
 
-	VkCommandPoolCreateInfo pool_info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-	pool_info.queueFamilyIndex = clas_queue_family;
-	pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-	VkCommandPool cmd_pool;
-	vkCreateCommandPool(vk_device, &pool_info, nullptr, &cmd_pool);
+	// Store buffer handles for cleanup
+	bd->vertex_buf = vertex_buf.buffer; bd->vertex_mem = vertex_buf.memory;
+	bd->index_buf = index_buf.buffer; bd->index_mem = index_buf.memory;
+	bd->info_buf = info_buf.buffer; bd->info_mem = info_buf.memory;
+	bd->clas_buf = clas_buf.buffer; bd->clas_mem = clas_buf.memory;
+	bd->scratch_buf = scratch.buffer; bd->scratch_mem = scratch.memory;
+	bd->addr_buf = addr_buf.buffer; bd->addr_mem = addr_buf.memory;
+	bd->sizes_buf = sizes_buf.buffer; bd->sizes_mem = sizes_buf.memory;
 
-	VkCommandBufferAllocateInfo cmd_alloc = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-	cmd_alloc.commandPool = cmd_pool;
-	cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	cmd_alloc.commandBufferCount = 1;
-	VkCommandBuffer cmd;
-	vkAllocateCommandBuffers(vk_device, &cmd_alloc, &cmd);
+	// Store CLAS build command info (will be replayed by command_build_clas)
+	bd->cluster_input = cluster_input;
+	bd->clas_input_info = input_info;
+	bd->clas_input_info.opInput.pTriangleClusters = &bd->cluster_input;
 
-	VkCommandBufferBeginInfo begin_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-	begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	vkBeginCommandBuffer(cmd, &begin_info);
-
-	VkClusterAccelerationStructureCommandsInfoNV cmd_info = {};
-	cmd_info.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
-	cmd_info.input = input_info;
-	cmd_info.dstImplicitData = clas_buf.address;
-	cmd_info.srcInfosArray.deviceAddress = info_buf.address;
-	cmd_info.srcInfosArray.size = info_buf_size;
-	cmd_info.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureBuildTriangleClusterInfoNV);
-	cmd_info.dstAddressesArray.deviceAddress = addr_buf.address;
-	cmd_info.dstAddressesArray.size = addr_buf_size;
-	cmd_info.dstAddressesArray.stride = sizeof(VkDeviceAddress);
-	cmd_info.dstSizesArray.deviceAddress = sizes_buf.address;
-	cmd_info.dstSizesArray.size = sizes_buf_size;
-	cmd_info.dstSizesArray.stride = sizeof(uint32_t);
-	cmd_info.scratchData = scratch.address;
-
-	device_functions.CmdBuildClusterAccelerationStructureIndirectNV(cmd, &cmd_info);
-
-	// Barrier: CLAS write → BLAS read
-	VkMemoryBarrier barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-	barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-	barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_HOST_READ_BIT;
-	vkCmdPipelineBarrier(cmd,
-		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_HOST_BIT,
-		0, 1, &barrier, 0, nullptr, 0, nullptr);
-
-	vkEndCommandBuffer(cmd);
-
-	VkSubmitInfo submit = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &cmd;
-	vkQueueSubmit(clas_queue, 1, &submit, VK_NULL_HANDLE);
-	vkQueueWaitIdle(clas_queue);
+	bd->clas_cmd_info = {};
+	bd->clas_cmd_info.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+	bd->clas_cmd_info.input = bd->clas_input_info;
+	bd->clas_cmd_info.dstImplicitData = clas_buf.address;
+	bd->clas_cmd_info.srcInfosArray.deviceAddress = info_buf.address;
+	bd->clas_cmd_info.srcInfosArray.size = info_buf_size;
+	bd->clas_cmd_info.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureBuildTriangleClusterInfoNV);
+	bd->clas_cmd_info.dstAddressesArray.deviceAddress = addr_buf.address;
+	bd->clas_cmd_info.dstAddressesArray.size = addr_buf_size;
+	bd->clas_cmd_info.dstAddressesArray.stride = sizeof(VkDeviceAddress);
+	bd->clas_cmd_info.dstSizesArray.deviceAddress = sizes_buf.address;
+	bd->clas_cmd_info.dstSizesArray.size = sizes_buf_size;
+	bd->clas_cmd_info.dstSizesArray.stride = sizeof(uint32_t);
+	bd->clas_cmd_info.scratchData = scratch.address;
 
 	// ---- Step 7: Build BLAS from CLAS (IMPLICIT_DESTINATIONS) ----
+	// NOTE: Query BLAS sizes BEFORE recording command buffer so we can do CLAS+BLAS in one submit
 
-	// Query BLAS sizes
 	VkClusterAccelerationStructureClustersBottomLevelInputNV blas_input = {};
 	blas_input.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_CLUSTERS_BOTTOM_LEVEL_INPUT_NV;
 	blas_input.maxTotalClusterCount = p_meshlet_count;
@@ -6757,7 +6729,6 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		device_local, nullptr);
 
-	// BLAS build info references the CLAS cluster addresses (written by CLAS build into addr_buf)
 	VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV blas_build = {};
 	blas_build.clusterReferencesCount = p_meshlet_count;
 	blas_build.clusterReferencesStride = sizeof(VkDeviceAddress);
@@ -6767,62 +6738,44 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 	GpuBuf blas_dst = make_buffer(sizeof(VkDeviceAddress), input_usage, host_visible, nullptr);
 	GpuBuf blas_size = make_buffer(sizeof(uint32_t), input_usage, host_visible, nullptr);
 
-	// Reuse scratch if large enough, otherwise reallocate
-	if (blas_sizes.buildScratchSize > scratch.size) {
-		free_buf(scratch);
-		scratch = make_buffer(blas_sizes.buildScratchSize,
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			device_local, nullptr);
-	}
+	// Use SEPARATE scratch buffers for CLAS and BLAS (test: shared scratch might corrupt CLAS)
+	GpuBuf blas_scratch = make_buffer(blas_sizes.buildScratchSize > 0 ? blas_sizes.buildScratchSize : 256,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		device_local, nullptr);
 
-	vkBeginCommandBuffer(cmd, &begin_info);
+	// Store BLAS build buffer handles in deferred data
+	bd->blas_buf = blas_buf.buffer; bd->blas_mem = blas_buf.memory;
+	bd->blas_scratch_buf = blas_scratch.buffer; bd->blas_scratch_mem = blas_scratch.memory;
+	bd->blas_build_buf = blas_build_buf.buffer; bd->blas_build_mem = blas_build_buf.memory;
+	bd->blas_dst_buf = blas_dst.buffer; bd->blas_dst_mem = blas_dst.memory;
+	bd->blas_size_buf = blas_size.buffer; bd->blas_size_mem = blas_size.memory;
 
-	VkClusterAccelerationStructureCommandsInfoNV blas_cmd = {};
-	blas_cmd.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
-	blas_cmd.input = blas_info_nv;
-	blas_cmd.dstImplicitData = blas_buf.address;
-	blas_cmd.srcInfosArray.deviceAddress = blas_build_buf.address;
-	blas_cmd.srcInfosArray.size = sizeof(blas_build);
-	blas_cmd.srcInfosArray.stride = sizeof(blas_build);
-	blas_cmd.dstAddressesArray.deviceAddress = blas_dst.address;
-	blas_cmd.dstAddressesArray.size = sizeof(VkDeviceAddress);
-	blas_cmd.dstAddressesArray.stride = sizeof(VkDeviceAddress);
-	blas_cmd.dstSizesArray.deviceAddress = blas_size.address;
-	blas_cmd.dstSizesArray.size = sizeof(uint32_t);
-	blas_cmd.dstSizesArray.stride = sizeof(uint32_t);
-	blas_cmd.scratchData = scratch.address;
+	// Store BLAS build command info (deferred — replayed by command_build_clas)
+	bd->blas_input = blas_input;
+	bd->blas_input_info = blas_info_nv;
+	bd->blas_input_info.opInput.pClustersBottomLevel = &bd->blas_input;
 
-	device_functions.CmdBuildClusterAccelerationStructureIndirectNV(cmd, &blas_cmd);
+	bd->blas_cmd_info = {};
+	bd->blas_cmd_info.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+	bd->blas_cmd_info.input = bd->blas_input_info;
+	bd->blas_cmd_info.dstImplicitData = blas_buf.address;
+	bd->blas_cmd_info.srcInfosArray.deviceAddress = blas_build_buf.address;
+	bd->blas_cmd_info.srcInfosArray.size = sizeof(blas_build);
+	bd->blas_cmd_info.srcInfosArray.stride = sizeof(blas_build);
+	bd->blas_cmd_info.dstAddressesArray.deviceAddress = blas_dst.address;
+	bd->blas_cmd_info.dstAddressesArray.size = sizeof(VkDeviceAddress);
+	bd->blas_cmd_info.dstAddressesArray.stride = sizeof(VkDeviceAddress);
+	bd->blas_cmd_info.dstSizesArray.deviceAddress = blas_size.address;
+	bd->blas_cmd_info.dstSizesArray.size = sizeof(uint32_t);
+	bd->blas_cmd_info.dstSizesArray.stride = sizeof(uint32_t);
+	bd->blas_cmd_info.scratchData = blas_scratch.address;
 
-	vkEndCommandBuffer(cmd);
-	vkQueueSubmit(clas_queue, 1, &submit, VK_NULL_HANDLE);
-	vkQueueWaitIdle(clas_queue);
+	// For IMPLICIT_DESTINATIONS with a single BLAS, the output address == buffer base address.
+	// Verified in all test runs: blas_device_address == blas_buf.address.
+	VkDeviceAddress blas_device_address = blas_buf.address;
 
-	// Read back BLAS device address from host-visible output buffer
-	VkDeviceAddress blas_device_address = 0;
-	{
-		void *mapped;
-		vkMapMemory(vk_device, blas_dst.memory, 0, sizeof(VkDeviceAddress), 0, &mapped);
-		memcpy(&blas_device_address, mapped, sizeof(VkDeviceAddress));
-		vkUnmapMemory(vk_device, blas_dst.memory);
-	}
-
-	// ---- Cleanup ----
-	// Free temporary buffers (CLAS and BLAS buffers must persist)
-	free_buf(vertex_buf);
-	free_buf(index_buf);
-	free_buf(info_buf);
-	free_buf(scratch);
-	free_buf(addr_buf);
-	free_buf(sizes_buf);
-	free_buf(blas_build_buf);
-	free_buf(blas_dst);
-	free_buf(blas_size);
-	vkDestroyCommandPool(vk_device, cmd_pool, nullptr);
-
-	// Create AccelerationStructureInfo wrapping the BLAS address.
-	// clas_buf and blas_buf persist — they're referenced by the TLAS via the device address.
-	// TODO: Store clas_buf/blas_buf GpuBuf in AccelerationStructureInfo for proper cleanup.
+	// Create AccelerationStructureInfo with DEFERRED build.
+	// NO vkQueueSubmit — command_build_clas() replays into the draw_graph's command buffer.
 	AccelerationStructureInfo *accel_info = VersatileResource::allocate<AccelerationStructureInfo>(resources_allocator);
 	memset(&accel_info->geometry, 0, sizeof(accel_info->geometry));
 	memset(&accel_info->build_info, 0, sizeof(accel_info->build_info));
@@ -6830,11 +6783,10 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_blas_create(
 	accel_info->external_device_address = blas_device_address;
 	accel_info->scratch_size = 0;
 	accel_info->scratch_alignment = 0;
-
-	print_line(String("[CLAS] Built ") + itos(p_meshlet_count) + " clusters, " + itos(total_tris) +
-		" tris -> BLAS addr=" + itos(blas_device_address) + " clas_addr=" + itos(clas_buf.address));
+	accel_info->clas_build_data = bd;
 
 	return AccelerationStructureID(accel_info);
+
 #else
 	return AccelerationStructureID();
 #endif
@@ -7006,6 +6958,8 @@ void RenderingDeviceDriverVulkan::command_build_acceleration_structure(CommandBu
 	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
 	AccelerationStructureInfo *accel_info = (AccelerationStructureInfo *)p_acceleration_structure.id;
 
+	// Draw_graph handles barriers between CLAS build and TLAS build via resource tracking.
+
 	VkAccelerationStructureBuildGeometryInfoKHR *build_info = &accel_info->build_info;
 	VkDeviceAddress scratch_address = buffer_get_device_address(p_scratch_buffer);
 	build_info->scratchData.deviceAddress = _align_up_address(scratch_address, accel_info->scratch_alignment);
@@ -7013,6 +6967,36 @@ void RenderingDeviceDriverVulkan::command_build_acceleration_structure(CommandBu
 	const VkAccelerationStructureBuildRangeInfoKHR *range_info_ptr = &accel_info->range_info;
 
 	vkCmdBuildAccelerationStructuresKHR(command_buffer->vk_command_buffer, 1, build_info, &range_info_ptr);
+#endif
+}
+
+void RenderingDeviceDriverVulkan::command_build_clas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure) {
+#if VULKAN_RAYTRACING_ENABLED
+	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
+	AccelerationStructureInfo *accel_info = (AccelerationStructureInfo *)p_acceleration_structure.id;
+
+	// The CLAS build data was pre-recorded in clas_blas_create() and stored in clas_build_data.
+	// Now replay the NV build commands into the draw_graph's command buffer.
+	if (accel_info->clas_build_data) {
+		auto *bd = accel_info->clas_build_data;
+
+		// CLAS build
+		device_functions.CmdBuildClusterAccelerationStructureIndirectNV(
+			command_buffer->vk_command_buffer, &bd->clas_cmd_info);
+
+		// Barrier: CLAS write → BLAS read
+		VkMemoryBarrier barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+		barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+		barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+		vkCmdPipelineBarrier(command_buffer->vk_command_buffer,
+			VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+			VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+			0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+		// BLAS build
+		device_functions.CmdBuildClusterAccelerationStructureIndirectNV(
+			command_buffer->vk_command_buffer, &bd->blas_cmd_info);
+	}
 #endif
 }
 
@@ -7035,6 +7019,18 @@ void RenderingDeviceDriverVulkan::command_trace_rays(CommandBufferID p_cmd_buffe
 	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
 	ERR_FAIL_COND_MSG(bound_raytracing_pipeline_id == RaytracingPipelineID(), "A raytracing pipeline must have been bound with `command_bind_raytracing_pipeline()`.");
 	const RaytracingPipelineInfo *rpi = (const RaytracingPipelineInfo *)bound_raytracing_pipeline_id.id;
+
+	// CLAS DEBUG: Full memory barrier before trace to ensure external BLAS data is visible
+	{
+		VkMemoryBarrier full_barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+		full_barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+		full_barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		vkCmdPipelineBarrier(command_buffer->vk_command_buffer,
+			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			0, 1, &full_barrier, 0, nullptr, 0, nullptr);
+	}
+
 	vkCmdTraceRaysKHR(command_buffer->vk_command_buffer, &rpi->regions.raygen, &rpi->regions.miss, &rpi->regions.hit, &rpi->regions.call, p_width, p_height, 1);
 #endif
 }

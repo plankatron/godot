@@ -534,6 +534,19 @@ Error RenderingDevice::acceleration_structure_build(RID p_acceleration_structure
 	return OK;
 }
 
+Error RenderingDevice::clas_blas_build(RID p_acceleration_structure) {
+	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
+
+	AccelerationStructure *accel = acceleration_structure_owner.get_or_null(p_acceleration_structure);
+	ERR_FAIL_NULL_V_MSG(accel, ERR_INVALID_PARAMETER, "CLAS acceleration structure argument is not valid.");
+
+	// Register with draw_graph — command_build_clas() will replay the deferred build commands
+	// during frame execution, before the TLAS build.
+	draw_graph.add_clas_build(accel->driver_id, accel->draw_tracker);
+
+	return OK;
+}
+
 /***************************/
 /**** BUFFER MANAGEMENT ****/
 /***************************/

@@ -716,6 +716,42 @@ public:
 
 	// ----- ACCELERATION STRUCTURE -----
 
+	// Deferred CLAS build data — stored in AccelerationStructureInfo, replayed by command_build_clas.
+	struct CLASBuildData {
+		VkClusterAccelerationStructureCommandsInfoNV clas_cmd_info;
+		VkClusterAccelerationStructureCommandsInfoNV blas_cmd_info;
+		// Keep input_info and blas_info alive (clas_cmd_info.input references them)
+		VkClusterAccelerationStructureInputInfoNV clas_input_info;
+		VkClusterAccelerationStructureTriangleClusterInputNV cluster_input;
+		VkClusterAccelerationStructureInputInfoNV blas_input_info;
+		VkClusterAccelerationStructureClustersBottomLevelInputNV blas_input;
+		// GPU buffers that must persist (referenced by device addresses in cmd infos)
+		VkBuffer vertex_buf = VK_NULL_HANDLE;
+		VkDeviceMemory vertex_mem = VK_NULL_HANDLE;
+		VkBuffer index_buf = VK_NULL_HANDLE;
+		VkDeviceMemory index_mem = VK_NULL_HANDLE;
+		VkBuffer info_buf = VK_NULL_HANDLE;
+		VkDeviceMemory info_mem = VK_NULL_HANDLE;
+		VkBuffer clas_buf = VK_NULL_HANDLE;
+		VkDeviceMemory clas_mem = VK_NULL_HANDLE;
+		VkBuffer blas_buf = VK_NULL_HANDLE;
+		VkDeviceMemory blas_mem = VK_NULL_HANDLE;
+		VkBuffer scratch_buf = VK_NULL_HANDLE;
+		VkDeviceMemory scratch_mem = VK_NULL_HANDLE;
+		VkBuffer blas_scratch_buf = VK_NULL_HANDLE;
+		VkDeviceMemory blas_scratch_mem = VK_NULL_HANDLE;
+		VkBuffer addr_buf = VK_NULL_HANDLE;
+		VkDeviceMemory addr_mem = VK_NULL_HANDLE;
+		VkBuffer sizes_buf = VK_NULL_HANDLE;
+		VkDeviceMemory sizes_mem = VK_NULL_HANDLE;
+		VkBuffer blas_build_buf = VK_NULL_HANDLE;
+		VkDeviceMemory blas_build_mem = VK_NULL_HANDLE;
+		VkBuffer blas_dst_buf = VK_NULL_HANDLE;
+		VkDeviceMemory blas_dst_mem = VK_NULL_HANDLE;
+		VkBuffer blas_size_buf = VK_NULL_HANDLE;
+		VkDeviceMemory blas_size_mem = VK_NULL_HANDLE;
+	};
+
 	struct AccelerationStructureInfo {
 		VkAccelerationStructureKHR vk_acceleration_structure = VK_NULL_HANDLE;
 		// Buffer used for the structure
@@ -738,6 +774,9 @@ public:
 		// External BLAS: device address from a CLAS-backed BLAS built outside Godot.
 		// When non-zero, tlas_instances_buffer_fill uses this instead of buffer address.
 		VkDeviceAddress external_device_address = 0;
+
+		// Deferred CLAS build: populated by clas_blas_create, replayed by command_build_clas.
+		CLASBuildData *clas_build_data = nullptr;
 	};
 
 	virtual AccelerationStructureID blas_create(BufferID p_vertex_buffer, uint64_t p_vertex_offset, VertexFormatID p_vertex_format, uint32_t p_vertex_count, uint32_t p_position_attribute_location, BufferID p_index_buffer, IndexBufferFormat p_index_format, uint64_t p_index_offset_bytes, uint32_t p_index_count, BitField<AccelerationStructureGeometryBits> p_geometry_bits) override final;
@@ -756,6 +795,7 @@ public:
 	// ----- COMMANDS -----
 
 	virtual void command_build_acceleration_structure(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer) override final;
+	virtual void command_build_clas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure) override final;
 	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) override final;
 	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) override final;
 	virtual void command_trace_rays(CommandBufferID p_cmd_buffer, uint32_t p_width, uint32_t p_height) override final;

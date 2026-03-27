@@ -104,6 +104,7 @@ public:
 		enum Type {
 			TYPE_NONE,
 			TYPE_ACCELERATION_STRUCTURE_BUILD,
+			TYPE_CLAS_BUILD,
 			TYPE_BUFFER_CLEAR,
 			TYPE_BUFFER_COPY,
 			TYPE_BUFFER_GET_DATA,
@@ -345,6 +346,10 @@ private:
 	struct RecordedAccelerationStructureBuildCommand : RecordedCommand {
 		RDD::AccelerationStructureID acceleration_structure;
 		RDD::BufferID scratch_buffer;
+	};
+
+	struct RecordedCLASBuildCommand : RecordedCommand {
+		RDD::AccelerationStructureID acceleration_structure; // The CLAS-backed BLAS
 	};
 
 	struct RecordedBufferClearCommand : RecordedCommand {
@@ -879,6 +884,7 @@ public:
 	void finalize();
 	void begin();
 	void add_acceleration_structure_build(RDD::AccelerationStructureID p_acceleration_structure, RDD::BufferID p_scratch_buffer, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
+	void add_clas_build(RDD::AccelerationStructureID p_acceleration_structure, ResourceTracker *p_dst_tracker);
 	void add_buffer_clear(RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, uint32_t p_offset, uint32_t p_size);
 	void add_buffer_copy(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, RDD::BufferCopyRegion p_region);
 	void add_buffer_get_data(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, RDD::BufferCopyRegion p_region);

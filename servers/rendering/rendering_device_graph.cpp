@@ -1090,6 +1090,10 @@ void RenderingDeviceGraph::_run_render_commands(int32_t p_level, const RecordedC
 				const RecordedAccelerationStructureBuildCommand *as_build_command = reinterpret_cast<const RecordedAccelerationStructureBuildCommand *>(command);
 				driver->command_build_acceleration_structure(r_command_buffer, as_build_command->acceleration_structure, as_build_command->scratch_buffer);
 			} break;
+			case RecordedCommand::TYPE_CLAS_BUILD: {
+				const RecordedCLASBuildCommand *clas_command = reinterpret_cast<const RecordedCLASBuildCommand *>(command);
+				driver->command_build_clas(r_command_buffer, clas_command->acceleration_structure);
+			} break;
 			case RecordedCommand::TYPE_BUFFER_CLEAR: {
 				const RecordedBufferClearCommand *buffer_clear_command = reinterpret_cast<const RecordedBufferClearCommand *>(command);
 				driver->command_clear_buffer(r_command_buffer, buffer_clear_command->buffer, buffer_clear_command->offset, buffer_clear_command->size);
@@ -1809,6 +1813,19 @@ void RenderingDeviceGraph::add_acceleration_structure_build(RDD::AccelerationStr
 	usages[resource_count - 1] = RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
 
 	_add_command_to_graph(trackers.ptr(), usages.ptr(), usages.size(), command_index, command);
+}
+
+void RenderingDeviceGraph::add_clas_build(RDD::AccelerationStructureID p_acceleration_structure, ResourceTracker *p_dst_tracker) {
+	int32_t command_index;
+	RecordedCLASBuildCommand *command = static_cast<RecordedCLASBuildCommand *>(_allocate_command(sizeof(RecordedCLASBuildCommand), command_index));
+	command->type = RecordedCommand::TYPE_CLAS_BUILD;
+	command->self_stages = RDD::PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
+	command->acceleration_structure = p_acceleration_structure;
+
+	// CLAS build writes to the AS, must complete before TLAS build reads it.
+	ResourceTracker *tracker = p_dst_tracker;
+	ResourceUsage usage = RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
+	_add_command_to_graph(&tracker, &usage, 1, command_index, command);
 }
 
 void RenderingDeviceGraph::add_buffer_clear(RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, uint32_t p_offset, uint32_t p_size) {

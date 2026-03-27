@@ -91,19 +91,20 @@ void RenderRaytracing::process_pending_clas() {
 	// Called from build_tlas() on the render thread — safe to do Vulkan operations.
 	MutexLock lock(s_pending_clas_mutex);
 
-	// Build pending CLAS
+	// Build pending CLAS — clas_blas_create allocates buffers + stores deferred build commands.
+	// Then clas_blas_build registers the build with the draw_graph so it executes
+	// BEFORE the TLAS build in the same frame's command buffer.
 	for (const PendingCLAS &entry : s_pending_clas) {
 		RID blas = RD::get_singleton()->clas_blas_create(
 			entry.positions, entry.indices, entry.descriptors,
 			entry.max_vertices, entry.max_triangles);
 		if (blas.is_valid()) {
+			// Register deferred CLAS build with draw_graph
+			RD::get_singleton()->clas_blas_build(blas);
 			s_clas_blas_rids[entry.id] = { blas, entry.transform };
-			print_line(vformat("[CLAS] Built BLAS id=%d meshlets=%d", entry.id, entry.descriptors.size() / 4));
 		}
 	}
 	s_pending_clas.clear();
-
-	// CLAS TLAS injection disabled — debugging build sequence
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1144,16 @@ void RenderRaytracing::build_acceleration_structures(const LocalVector<RID> &p_d
 		}
 	}
 
+	// If we have externally-built BLAS (CLAS), insert a global memory barrier
+	// to ensure their data is visible to the TLAS build and ray traversal.
+	// The draw_graph only generates per-resource barriers for tracked ASes,
+	// so external BLAS data needs this explicit barrier.
+	if (!s_injected_blas.is_empty()) {
+		RD::get_singleton()->barrier(
+			RD::BARRIER_MASK_ALL_BARRIERS,
+			RD::BARRIER_MASK_ALL_BARRIERS);
+	}
+
 	// Create TLAS from all BLAS instances
 	if (blass.size() > 0) {
 		tlas_instances_buffer = RD::get_singleton()->tlas_instances_buffer_create(blass.size());
@@ -1319,7 +1330,7 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 	// Process deferred CLAS builds (from main thread, now safe on render thread)
 	process_pending_clas();
 
-	// Re-inject persistent CLAS BLAS into TLAS (re-enabled for validation layer debugging)
+	// Re-inject persistent CLAS BLAS into TLAS
 	for (const KeyValue<uint64_t, CLASEntry> &kv : s_clas_blas_rids) {
 		if (kv.value.blas.is_valid()) {
 			s_injected_blas.push_back({ kv.value.blas, kv.value.transform });
