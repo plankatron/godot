@@ -24,9 +24,12 @@ mat4 rt_view_matrix = transpose(mat4(scene_data_block.data.view_matrix[0],
 vec3 vertex = (rt_view_matrix * vec4(rt_hit_pos, 1.0)).xyz;
 vec2 uv_interp = rt_uv;
 vec2 uv2_interp = rt_uv;
-vec3 normal = rt_normal;
-vec3 tangent = rt_tangent;
-vec3 binormal = rt_bitangent;
+// Transform world-space TBN to view-space to match rasterization convention.
+// Spatial shaders expect NORMAL/TANGENT/BINORMAL in view-space; without this,
+// INV_VIEW_MATRIX * NORMAL double-transforms and slope/normal calculations break.
+vec3 normal = normalize((rt_view_matrix * vec4(rt_normal, 0.0)).xyz);
+vec3 tangent = normalize((rt_view_matrix * vec4(rt_tangent, 0.0)).xyz);
+vec3 binormal = normalize((rt_view_matrix * vec4(rt_bitangent, 0.0)).xyz);
 vec3 view = -gl_WorldRayDirectionEXT;
 vec4 color_interp = vec4(1.0);
 bool rt_front_facing = rt_front_face;
