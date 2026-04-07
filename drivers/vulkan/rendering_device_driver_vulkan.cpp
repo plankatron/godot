@@ -1397,13 +1397,17 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &raytracing_validation_features;
 	}
 
-	VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
-	if (acceleration_structure_capabilities.cluster_acceleration_structure_support) {
-		clas_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
-		clas_features.pNext = create_info_next;
-		clas_features.clusterAccelerationStructure = VK_TRUE;
-		create_info_next = &clas_features;
-	}
+	// CLAS feature temporarily disabled — enabling clusterAccelerationStructure
+	// changes driver-internal AS traversal and crashes on RTX 2070 / 590.48.01
+	// even for regular (non-CLAS) BLAS/TLAS. Re-enable once driver is updated
+	// or LsikkesNV intersection shader path is available.
+	// VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
+	// if (acceleration_structure_capabilities.cluster_acceleration_structure_support) {
+	// 	clas_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+	// 	clas_features.pNext = create_info_next;
+	// 	clas_features.clusterAccelerationStructure = VK_TRUE;
+	// 	create_info_next = &clas_features;
+	// }
 
 	VkPhysicalDeviceVulkan11Features vulkan_1_1_features = {};
 	VkPhysicalDeviceVulkan12Features vulkan_1_2_features = {};
@@ -7157,6 +7161,25 @@ RenderingDeviceDriverVulkan::CLASCollection *RenderingDeviceDriverVulkan::clas_c
 #else
 	return nullptr;
 #endif
+}
+
+bool RenderingDeviceDriverVulkan::clas_collection_readback_addresses(CLASCollection *p_collection) {
+	if (!p_collection || p_collection->built) return p_collection && p_collection->built;
+	void *mapped = nullptr;
+	VkResult err = vkMapMemory(vk_device, p_collection->addr_mem, 0,
+		p_collection->cluster_count * sizeof(VkDeviceAddress), 0, &mapped);
+	if (err != VK_SUCCESS || !mapped) return false;
+	const VkDeviceAddress *addrs = static_cast<const VkDeviceAddress *>(mapped);
+	bool all_valid = true;
+	for (uint32_t i = 0; i < p_collection->cluster_count; i++) {
+		p_collection->cluster_addresses[i] = addrs[i];
+		if (addrs[i] == 0) all_valid = false;
+	}
+	vkUnmapMemory(vk_device, p_collection->addr_mem);
+	if (all_valid) {
+		p_collection->built = true;
+	}
+	return all_valid;
 }
 
 RDD::AccelerationStructureID RenderingDeviceDriverVulkan::clas_subset_blas_create(

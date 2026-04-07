@@ -378,6 +378,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	BitField<RD::BufferCreationBits> buffer_flags = use_as_storage ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
 	if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
 		buffer_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		buffer_flags.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
 	}
 
 	if (new_surface.vertex_data.size()) {
@@ -1079,6 +1080,7 @@ void MeshStorage::_mesh_instance_add_surface_buffer(MeshInstance *mi, Mesh *mesh
 	BitField<RD::BufferCreationBits> buffer_flags = RD::BUFFER_CREATION_AS_STORAGE_BIT;
 	if (mi->skeleton.is_valid()) {
 		buffer_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		buffer_flags.set_flag(RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT);
 	}
 	s->vertex_buffer[p_buffer_index] = RD::get_singleton()->vertex_buffer_create(mesh->surfaces[p_surface]->vertex_buffer_size, Vector<uint8_t>(), buffer_flags);
 

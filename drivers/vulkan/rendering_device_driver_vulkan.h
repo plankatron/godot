@@ -820,6 +820,7 @@ public:
 		const uint8_t *p_indices, uint32_t p_index_count,
 		const int32_t *p_descriptors, uint32_t p_meshlet_count,
 		uint32_t p_max_vertices, uint32_t p_max_triangles);
+	bool clas_collection_readback_addresses(CLASCollection *p_collection);
 	AccelerationStructureID clas_subset_blas_create(CLASCollection *p_collection,
 		const uint32_t *p_selected_indices, uint32_t p_selected_count);
 	void clas_collection_free(CLASCollection *p_collection);
