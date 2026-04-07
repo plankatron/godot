@@ -4445,6 +4445,11 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 			}
 		}
 		if (stage == ShaderStage::SHADER_STAGE_INTERSECTION) {
+			// Intersection shader starts a procedural hit group.
+			// The next closest-hit (and optional any-hit) stages will be
+			// added to this same group via the hit_group_index path above,
+			// since the group's type is PROCEDURAL and the CH/AH slots
+			// are initially UNUSED.
 			VkRayTracingShaderGroupCreateInfoKHR group_info = {};
 			group_info.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 			group_info.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
@@ -4453,6 +4458,7 @@ RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_container(const Re
 			group_info.intersectionShader = i;
 			group_info.generalShader = VK_SHADER_UNUSED_KHR;
 
+			hit_group_index = shader_info.vk_groups_create_info.size();
 			shader_info.vk_groups_create_info.push_back(group_info);
 		}
 	}

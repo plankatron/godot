@@ -557,3 +557,66 @@ void main() {
 	}
 #endif
 }
+
+#[intersection]
+
+#version 460
+
+#VERSION_DEFINES
+
+#pragma shader_stage(intersection)
+#extension GL_EXT_ray_tracing : enable
+
+// Hit attributes passed to closest-hit shader.
+hitAttributeEXT vec3 hitNormal;
+
+// Procedural intersection data (bound by GDExtension).
+layout(set = 2, binding = 0, std430) readonly buffer AABBChunkInfo {
+	vec4 chunk_origins[];  // .xyz = world origin, .w = voxel_size
+};
+layout(set = 2, binding = 1) uniform sampler3D density_atlas;
+
+/* RT_INTERSECTION_CODE */
+
+void main() {
+	vec3 ro = gl_WorldRayOriginEXT;
+	vec3 rd = gl_WorldRayDirectionEXT;
+	uint chunk_id = gl_PrimitiveID;
+
+	vec3 chunk_origin = chunk_origins[chunk_id].xyz;
+	float voxel_size = chunk_origins[chunk_id].w;
+	float grid_extent = voxel_size * 32.0;
+
+	float t = gl_RayTminEXT;
+	const int MAX_STEPS = 128;
+	const float THRESHOLD = 0.0005;
+
+	for (int i = 0; i < MAX_STEPS; i++) {
+		if (t > gl_RayTmaxEXT) break;
+
+		vec3 p = ro + rd * t;
+		vec3 local = (p - chunk_origin) / grid_extent;
+
+		if (any(lessThan(local, vec3(0.0))) || any(greaterThan(local, vec3(1.0)))) {
+			t += voxel_size * 0.5;
+			continue;
+		}
+
+		float d = texture(density_atlas, local).r;
+
+		if (d < THRESHOLD * t) {
+			// Normal via tetrahedron method (4 SDF evals)
+			vec2 e = vec2(voxel_size * 0.25, -voxel_size * 0.25);
+			hitNormal = normalize(
+				e.xyy * texture(density_atlas, (p + e.xyy - chunk_origin) / grid_extent).r +
+				e.yyx * texture(density_atlas, (p + e.yyx - chunk_origin) / grid_extent).r +
+				e.yxy * texture(density_atlas, (p + e.yxy - chunk_origin) / grid_extent).r +
+				e.xxx * texture(density_atlas, (p + e.xxx - chunk_origin) / grid_extent).r
+			);
+			reportIntersectionEXT(t, 0u);
+			return;
+		}
+
+		t += max(abs(d), voxel_size * 0.1);
+	}
+}
