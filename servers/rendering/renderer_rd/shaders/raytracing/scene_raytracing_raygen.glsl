@@ -407,6 +407,44 @@ void main() {
 
 	shade_and_bounce(h, m);
 #else
+#ifdef RT_PROCEDURAL_HIT_GROUP
+	// Procedural terrain: triplanar texturing from hit position + normal.
+	vec3 world_pos = h.hit_pos;
+	vec3 world_normal = h.geometry_normal;
+
+	// Hash-based noise for texture variation
+	vec3 sp = world_pos * 0.15;
+	vec3 hash_p = fract(sp * vec3(443.897, 441.423, 437.195));
+	hash_p += dot(hash_p, hash_p.yzx + 19.19);
+	float tri_noise = fract((hash_p.x + hash_p.y) * hash_p.z);
+	float detail = fract(sin(dot(world_pos * 0.5, vec3(12.9898, 78.233, 45.164))) * 43758.5453) * 0.3
+	             + fract(sin(dot(world_pos * 1.7, vec3(63.7, 17.3, 91.1))) * 43758.5453) * 0.15;
+
+	// Y-up grass blend
+	float up_factor = world_normal.y;
+	float grass_threshold = 0.65 + (tri_noise - 0.5) * 0.4;
+	float grass_t = smoothstep(grass_threshold - 0.1, grass_threshold + 0.1, up_factor);
+	float height_fade = smoothstep(-5.0, 5.0, world_pos.y);
+	grass_t *= height_fade;
+	float dirt_t = smoothstep(0.3, 0.5, up_factor) * (1.0 - grass_t);
+
+	vec3 grass_color = vec3(0.25, 0.45, 0.15);
+	vec3 rock_color = vec3(0.35, 0.30, 0.25);
+	vec3 dirt_color = vec3(0.30, 0.22, 0.12);
+	vec3 base_rock = rock_color * (0.8 + detail * 0.4);
+	vec3 base_grass = grass_color * (0.85 + detail * 0.3);
+	vec3 base_dirt = dirt_color * (0.85 + detail * 0.3);
+
+	MaterialResult m;
+	m.albedo = mix(mix(base_rock, base_dirt, dirt_t), base_grass, grass_t);
+	m.alpha = 1.0;
+	m.roughness = 0.85 + tri_noise * 0.15;
+	m.metalness = 0.0;
+	m.emissive = vec3(0.0);
+	m.normal = world_normal;
+
+	shade_and_bounce(h, m);
+#else
 	// HG0: StandardMaterial3D evaluation.
 	MaterialData mat = materials[h.geometry_idx];
 	vec2 uv = h.uv * mat.uv1_scale + mat.uv1_offset;
@@ -457,6 +495,7 @@ void main() {
 	} else {
 		shade_and_bounce(h, m);
 	}
+#endif
 #endif
 }
 

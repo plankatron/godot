@@ -1343,7 +1343,8 @@ public:
 	void rt_update_clas_collection_selection(uint64_t p_id, const PackedInt32Array &p_selected_indices);
 	void rt_free_clas(uint64_t p_id);
 	void rt_free_clas_collection(uint64_t p_id);
-	void rt_inject_external_blas(RID p_blas, const Transform3D &p_transform, bool p_procedural = false);
+	void rt_inject_external_blas(RID p_blas, const Transform3D &p_transform, bool p_procedural = false,
+		int64_t p_noise_params_address = 0, int64_t p_noise_perm_address = 0);
 	void rt_clear_injected_blas();
 	RID tlas_instances_buffer_create(uint32_t p_instance_count, BitField<BufferCreationBits> p_creation_bits = 0);
 	void tlas_instances_buffer_fill(RID p_buffer, const Vector<RID> &p_blases, VectorView<Transform3D> p_transforms, VectorView<uint32_t> p_instance_flags = VectorView<uint32_t>(), VectorView<uint32_t> p_sbt_offsets = VectorView<uint32_t>());

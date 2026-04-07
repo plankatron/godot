@@ -74,7 +74,9 @@ struct alignas(16) RT_GeometryData {
 	float aabb_size_x;
 	float aabb_size_y;
 	float aabb_size_z;
-	uint32_t _pad[10];
+	uint64_t noise_params_address;  // BDA for noise params buffer (0 = none)
+	uint64_t noise_perm_address;    // BDA for permutation tables buffer (0 = none)
+	uint32_t _pad[6];
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 
@@ -255,8 +257,11 @@ public:
 		RID blas;
 		Transform3D transform;
 		bool is_procedural = false; // true for AABB BLAS (uses intersection shader hit group)
+		uint64_t noise_params_address = 0;
+		uint64_t noise_perm_address = 0;
 	};
-	static void inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural = false);
+	static void inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural = false,
+		uint64_t p_noise_params_address = 0, uint64_t p_noise_perm_address = 0);
 	static void clear_injected_blas();
 	static LocalVector<InjectedBLAS> s_injected_blas;
 

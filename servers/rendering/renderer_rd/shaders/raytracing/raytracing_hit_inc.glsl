@@ -40,8 +40,9 @@ struct GeometryData {
 	float aabb_size_y;
 	float aabb_size_z;
 
-	uint material_index;
-	uint _pad[9];
+	uint64_t noise_params_address;
+	uint64_t noise_perm_address;
+	uint _pad[6];
 };
 
 // ============================================================================

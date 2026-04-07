@@ -53,8 +53,9 @@ HashMap<uint64_t, RenderRaytracing::CLASCollectionEntry> RenderRaytracing::s_cla
 
 static uint64_t s_next_clas_id = 1;
 
-void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural) {
-	s_injected_blas.push_back({ p_blas, p_transform, p_procedural });
+void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural,
+		uint64_t p_noise_params_address, uint64_t p_noise_perm_address) {
+	s_injected_blas.push_back({ p_blas, p_transform, p_procedural, p_noise_params_address, p_noise_perm_address });
 }
 
 void RenderRaytracing::clear_injected_blas() {
@@ -1478,6 +1479,8 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 
 		// Default geometry/material data for external BLAS.
 		RT_GeometryData geo = {};
+		geo.noise_params_address = ext.noise_params_address;
+		geo.noise_perm_address = ext.noise_perm_address;
 		geometry_data.push_back(geo);
 		RT_MaterialData mat = {};
 		mat.albedo_color[0] = 0.5f;

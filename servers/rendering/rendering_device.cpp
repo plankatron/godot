@@ -488,8 +488,10 @@ void RenderingDevice::rt_free_clas_collection(uint64_t p_id) {
 	RendererSceneRenderImplementation::RenderRaytracing::free_clas_collection(p_id);
 }
 
-void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform, bool p_procedural) {
-	RendererSceneRenderImplementation::RenderRaytracing::inject_external_blas(p_blas, p_transform, p_procedural);
+void RenderingDevice::rt_inject_external_blas(RID p_blas, const Transform3D &p_transform, bool p_procedural,
+		int64_t p_noise_params_address, int64_t p_noise_perm_address) {
+	RendererSceneRenderImplementation::RenderRaytracing::inject_external_blas(p_blas, p_transform, p_procedural,
+		(uint64_t)p_noise_params_address, (uint64_t)p_noise_perm_address);
 }
 
 void RenderingDevice::rt_clear_injected_blas() {
@@ -8629,7 +8631,7 @@ void RenderingDevice::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clas_blas_create", "positions", "indices", "descriptors", "max_vertices", "max_triangles"), &RenderingDevice::clas_blas_create);
 	ClassDB::bind_method(D_METHOD("rt_queue_clas_build", "positions", "indices", "descriptors", "transform", "max_vertices", "max_triangles"), &RenderingDevice::rt_queue_clas_build);
 	ClassDB::bind_method(D_METHOD("rt_free_clas", "id"), &RenderingDevice::rt_free_clas);
-	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform", "procedural"), &RenderingDevice::rt_inject_external_blas, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform", "procedural", "noise_params_address", "noise_perm_address"), &RenderingDevice::rt_inject_external_blas, DEFVAL(false), DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("rt_clear_injected_blas"), &RenderingDevice::rt_clear_injected_blas);
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_create", "instance_count", "creation_bits"), &RenderingDevice::tlas_instances_buffer_create, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_fill", "instances_buffer", "blases", "transforms"), &RenderingDevice::_tlas_instances_buffer_fill);
