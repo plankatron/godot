@@ -316,6 +316,37 @@ RID RenderingDevice::blas_create(RID p_vertex_array, RID p_index_array, BitField
 	return id;
 }
 
+RID RenderingDevice::blas_create_aabb(RID p_aabb_buffer, uint32_t p_aabb_count, uint32_t p_aabb_stride) {
+	ERR_FAIL_COND_V_MSG(!has_feature(SUPPORTS_RAYTRACING_PIPELINE) && !has_feature(SUPPORTS_RAY_QUERY), RID(),
+		"The current rendering device has neither raytracing pipeline nor ray query support.");
+	ERR_FAIL_COND_V(p_aabb_count == 0, RID());
+	if (p_aabb_stride == 0) {
+		p_aabb_stride = 24; // sizeof(VkAabbPositionsKHR) = 6 floats
+	}
+
+	Buffer *buffer = storage_buffer_owner.get_or_null(p_aabb_buffer);
+	ERR_FAIL_NULL_V_MSG(buffer, RID(), "AABB buffer is not a valid storage buffer.");
+
+	AccelerationStructure acceleration_structure;
+	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BLAS;
+
+	BitField<RDD::AccelerationStructureGeometryBits> geometry_bits;
+	geometry_bits.set_flag(RDD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE);
+
+	acceleration_structure.driver_id = driver->blas_create_aabb(buffer->driver_id, p_aabb_count, p_aabb_stride, geometry_bits);
+	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create AABB BLAS.");
+
+	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
+	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
+	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
+
+	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
+#ifdef DEV_ENABLED
+	set_resource_name(id, "RID:" + itos(id.get_id()));
+#endif
+	return id;
+}
+
 RID RenderingDevice::blas_create_from_device_address(uint64_t p_device_address) {
 	ERR_FAIL_COND_V_MSG(p_device_address == 0, RID(), "External BLAS device address cannot be zero.");
 
@@ -8565,6 +8596,7 @@ void RenderingDevice::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("blas_create", "vertex_array", "index_array", "geometry_bits", "position_attribute_location"), &RenderingDevice::blas_create, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("blas_create_from_device_address", "device_address"), &RenderingDevice::blas_create_from_device_address);
+	ClassDB::bind_method(D_METHOD("blas_create_aabb", "aabb_buffer", "aabb_count", "aabb_stride"), &RenderingDevice::blas_create_aabb, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("clas_blas_create", "positions", "indices", "descriptors", "max_vertices", "max_triangles"), &RenderingDevice::clas_blas_create);
 	ClassDB::bind_method(D_METHOD("rt_queue_clas_build", "positions", "indices", "descriptors", "transform", "max_vertices", "max_triangles"), &RenderingDevice::rt_queue_clas_build);
 	ClassDB::bind_method(D_METHOD("rt_free_clas", "id"), &RenderingDevice::rt_free_clas);

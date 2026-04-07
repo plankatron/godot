@@ -6444,6 +6444,49 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(BufferID p
 #endif
 }
 
+RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create_aabb(BufferID p_aabb_buffer, uint32_t p_aabb_count, uint32_t p_aabb_stride, BitField<AccelerationStructureGeometryBits> p_geometry_bits) {
+#if VULKAN_RAYTRACING_ENABLED
+	ERR_FAIL_COND_V(p_aabb_count == 0, AccelerationStructureID());
+	ERR_FAIL_COND_V(p_aabb_stride < 24, AccelerationStructureID()); // VkAabbPositionsKHR = 6 floats = 24 bytes minimum
+
+	VkDeviceAddress aabb_address = buffer_get_device_address(p_aabb_buffer);
+	ERR_FAIL_COND_V(aabb_address == 0, AccelerationStructureID());
+
+	AccelerationStructureInfo *accel_info = VersatileResource::allocate<AccelerationStructureInfo>(resources_allocator);
+
+	accel_info->geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+	accel_info->geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
+	accel_info->geometry.flags = p_geometry_bits;
+
+	accel_info->geometry.geometry.aabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+	accel_info->geometry.geometry.aabbs.data.deviceAddress = aabb_address;
+	accel_info->geometry.geometry.aabbs.stride = p_aabb_stride;
+
+	accel_info->range_info.firstVertex = 0;
+	accel_info->range_info.primitiveCount = p_aabb_count;
+	accel_info->range_info.primitiveOffset = 0;
+	accel_info->range_info.transformOffset = 0;
+
+	accel_info->build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+	accel_info->build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+	accel_info->build_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+	accel_info->build_info.pGeometries = &accel_info->geometry;
+	accel_info->build_info.geometryCount = 1;
+	accel_info->build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR; // AABBs change frequently
+
+	VkAccelerationStructureBuildSizesInfoKHR size_info = {};
+	size_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+	uint32_t max_primitive_count = p_aabb_count;
+	vkGetAccelerationStructureBuildSizesKHR(vk_device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &accel_info->build_info, &max_primitive_count, &size_info);
+	_acceleration_structure_create(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, size_info, accel_info);
+
+	return AccelerationStructureID(accel_info);
+#else
+	return AccelerationStructureID();
+#endif
+}
+
 RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create_from_device_address(uint64_t p_device_address) {
 #if VULKAN_RAYTRACING_ENABLED
 	AccelerationStructureInfo *accel_info = VersatileResource::allocate<AccelerationStructureInfo>(resources_allocator);
