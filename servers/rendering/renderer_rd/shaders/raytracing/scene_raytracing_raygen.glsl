@@ -570,53 +570,48 @@ void main() {
 // Hit attributes passed to closest-hit shader.
 hitAttributeEXT vec3 hitNormal;
 
-// Procedural intersection data (bound by GDExtension).
-layout(set = 2, binding = 0, std430) readonly buffer AABBChunkInfo {
-	vec4 chunk_origins[];  // .xyz = world origin, .w = voxel_size
-};
-layout(set = 2, binding = 1) uniform sampler3D density_atlas;
+// Analytical SDF for procedural terrain intersection.
+// Phase 1 (MVP): self-contained SDF (no external density data needed).
+// Phase 2: replace with density atlas sampling from GDExtension-provided data.
 
-/* RT_INTERSECTION_CODE */
+float sdf_terrain(vec3 p) {
+	// Ground plane at Y=0 with noise hills
+	float h = p.y;
+	// Simple FBM noise for terrain shape
+	vec3 q = p * 0.02;
+	h -= 5.0 * (sin(q.x * 1.7) * cos(q.z * 1.3) +
+	             sin(q.x * 0.5 + q.z * 0.8) * 2.0 +
+	             sin(q.x * 3.1 + q.z * 2.7) * 0.5);
+	return h;
+}
 
 void main() {
-	vec3 ro = gl_WorldRayOriginEXT;
-	vec3 rd = gl_WorldRayDirectionEXT;
-	uint chunk_id = gl_PrimitiveID;
-
-	vec3 chunk_origin = chunk_origins[chunk_id].xyz;
-	float voxel_size = chunk_origins[chunk_id].w;
-	float grid_extent = voxel_size * 32.0;
+	vec3 ro = gl_ObjectRayOriginEXT;
+	vec3 rd = gl_ObjectRayDirectionEXT;
 
 	float t = gl_RayTminEXT;
-	const int MAX_STEPS = 128;
-	const float THRESHOLD = 0.0005;
+	const int MAX_STEPS = 64;
+	const float THRESHOLD = 0.001;
 
 	for (int i = 0; i < MAX_STEPS; i++) {
 		if (t > gl_RayTmaxEXT) break;
 
 		vec3 p = ro + rd * t;
-		vec3 local = (p - chunk_origin) / grid_extent;
+		float d = sdf_terrain(p);
 
-		if (any(lessThan(local, vec3(0.0))) || any(greaterThan(local, vec3(1.0)))) {
-			t += voxel_size * 0.5;
-			continue;
-		}
-
-		float d = texture(density_atlas, local).r;
-
-		if (d < THRESHOLD * t) {
-			// Normal via tetrahedron method (4 SDF evals)
-			vec2 e = vec2(voxel_size * 0.25, -voxel_size * 0.25);
+		if (abs(d) < THRESHOLD * max(1.0, t)) {
+			// Normal via tetrahedron method
+			vec2 e = vec2(0.01, -0.01);
 			hitNormal = normalize(
-				e.xyy * texture(density_atlas, (p + e.xyy - chunk_origin) / grid_extent).r +
-				e.yyx * texture(density_atlas, (p + e.yyx - chunk_origin) / grid_extent).r +
-				e.yxy * texture(density_atlas, (p + e.yxy - chunk_origin) / grid_extent).r +
-				e.xxx * texture(density_atlas, (p + e.xxx - chunk_origin) / grid_extent).r
+				e.xyy * sdf_terrain(p + e.xyy) +
+				e.yyx * sdf_terrain(p + e.yyx) +
+				e.yxy * sdf_terrain(p + e.yxy) +
+				e.xxx * sdf_terrain(p + e.xxx)
 			);
 			reportIntersectionEXT(t, 0u);
 			return;
 		}
 
-		t += max(abs(d), voxel_size * 0.1);
+		t += max(abs(d) * 0.8, 0.01);
 	}
 }

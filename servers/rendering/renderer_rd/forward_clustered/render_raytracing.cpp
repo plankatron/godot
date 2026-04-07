@@ -1453,6 +1453,13 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 		}
 	}
 
+	// Build any procedural AABB BLAS that need GPU AS build.
+	for (const InjectedBLAS &ext : s_injected_blas) {
+		if (ext.is_procedural && ext.blas.is_valid()) {
+			RD::get_singleton()->acceleration_structure_build(ext.blas);
+		}
+	}
+
 	// Append externally injected BLAS (CLAS-backed terrain, procedural AABB, etc.)
 	for (const InjectedBLAS &ext : s_injected_blas) {
 		blass.push_back(ext.blas);

@@ -316,16 +316,32 @@ RID RenderingDevice::blas_create(RID p_vertex_array, RID p_index_array, BitField
 	return id;
 }
 
-RID RenderingDevice::blas_create_aabb(RID p_aabb_buffer, uint32_t p_aabb_count, uint32_t p_aabb_stride) {
+RID RenderingDevice::blas_create_aabb(const PackedFloat32Array &p_aabb_data, uint32_t p_aabb_count) {
 	ERR_FAIL_COND_V_MSG(!has_feature(SUPPORTS_RAYTRACING_PIPELINE) && !has_feature(SUPPORTS_RAY_QUERY), RID(),
 		"The current rendering device has neither raytracing pipeline nor ray query support.");
 	ERR_FAIL_COND_V(p_aabb_count == 0, RID());
-	if (p_aabb_stride == 0) {
-		p_aabb_stride = 24; // sizeof(VkAabbPositionsKHR) = 6 floats
-	}
+	ERR_FAIL_COND_V_MSG((uint32_t)p_aabb_data.size() < p_aabb_count * 6, RID(),
+		"AABB data too small: need " + itos(p_aabb_count * 6) + " floats, got " + itos(p_aabb_data.size()));
 
-	Buffer *buffer = storage_buffer_owner.get_or_null(p_aabb_buffer);
-	ERR_FAIL_NULL_V_MSG(buffer, RID(), "AABB buffer is not a valid storage buffer.");
+	// Create a CPU-visible buffer with AABB data and correct AS build input flags.
+	uint32_t byte_size = p_aabb_count * 24; // 6 floats × 4 bytes
+
+	BitField<RDD::BufferUsageBits> buf_usage =
+		RDD::BUFFER_USAGE_TRANSFER_FROM_BIT |
+		RDD::BUFFER_USAGE_TRANSFER_TO_BIT |
+		RDD::BUFFER_USAGE_STORAGE_BIT |
+		RDD::BUFFER_USAGE_DEVICE_ADDRESS_BIT |
+		RDD::BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
+
+	// Use CPU allocation so data is uploaded immediately via mapped memory.
+	RDD::BufferID aabb_buf = driver->buffer_create(byte_size, buf_usage, RDD::MEMORY_ALLOCATION_TYPE_CPU, frames_drawn);
+	ERR_FAIL_COND_V(!aabb_buf, RID());
+
+	// Map and write AABB data directly.
+	uint8_t *mapped = driver->buffer_map(aabb_buf);
+	ERR_FAIL_NULL_V_MSG(mapped, RID(), "Failed to map AABB buffer.");
+	memcpy(mapped, p_aabb_data.ptr(), byte_size);
+	driver->buffer_unmap(aabb_buf);
 
 	AccelerationStructure acceleration_structure;
 	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BLAS;
@@ -333,7 +349,7 @@ RID RenderingDevice::blas_create_aabb(RID p_aabb_buffer, uint32_t p_aabb_count, 
 	BitField<RDD::AccelerationStructureGeometryBits> geometry_bits;
 	geometry_bits.set_flag(RDD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE);
 
-	acceleration_structure.driver_id = driver->blas_create_aabb(buffer->driver_id, p_aabb_count, p_aabb_stride, geometry_bits);
+	acceleration_structure.driver_id = driver->blas_create_aabb(aabb_buf, p_aabb_count, 24, geometry_bits);
 	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create AABB BLAS.");
 
 	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
@@ -8596,7 +8612,7 @@ void RenderingDevice::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("blas_create", "vertex_array", "index_array", "geometry_bits", "position_attribute_location"), &RenderingDevice::blas_create, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("blas_create_from_device_address", "device_address"), &RenderingDevice::blas_create_from_device_address);
-	ClassDB::bind_method(D_METHOD("blas_create_aabb", "aabb_buffer", "aabb_count", "aabb_stride"), &RenderingDevice::blas_create_aabb, DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("blas_create_aabb", "aabb_data", "aabb_count"), &RenderingDevice::blas_create_aabb);
 	ClassDB::bind_method(D_METHOD("clas_blas_create", "positions", "indices", "descriptors", "max_vertices", "max_triangles"), &RenderingDevice::clas_blas_create);
 	ClassDB::bind_method(D_METHOD("rt_queue_clas_build", "positions", "indices", "descriptors", "transform", "max_vertices", "max_triangles"), &RenderingDevice::rt_queue_clas_build);
 	ClassDB::bind_method(D_METHOD("rt_free_clas", "id"), &RenderingDevice::rt_free_clas);

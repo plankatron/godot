@@ -44,8 +44,7 @@ HitData compute_hit_data() {
 	h.bitangent = cross(h.geometry_normal, h.tangent);
 	h.uv = vec2(0.0); // procedural geometry has no UV — triplanar in fragment
 	return h;
-#endif
-
+#else
 	GeometryData geom = geometries[h.geometry_idx];
 
 	// CLAS hit: vertex_address == 0 means cluster-backed BLAS with no per-vertex data.
@@ -81,6 +80,7 @@ HitData compute_hit_data() {
 	}
 
 	return h;
+#endif // RT_PROCEDURAL_HIT_GROUP
 }
 
 // ============================================================================

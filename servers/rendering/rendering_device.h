@@ -1330,7 +1330,7 @@ public:
 
 	RID blas_create(RID p_vertex_array, RID p_index_array, BitField<AccelerationStructureGeometryBits> p_geometry_bits = 0, uint32_t p_position_attribute_location = 0);
 	RID blas_create_from_device_address(uint64_t p_device_address);
-	RID blas_create_aabb(RID p_aabb_buffer, uint32_t p_aabb_count, uint32_t p_aabb_stride = 0);
+	RID blas_create_aabb(const PackedFloat32Array &p_aabb_data, uint32_t p_aabb_count);
 	RID clas_blas_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles);
 	void *clas_collection_create(const PackedFloat32Array &p_positions, const PackedByteArray &p_indices, const PackedInt32Array &p_descriptors, int p_max_vertices, int p_max_triangles);
 	bool clas_collection_readback_addresses(void *p_collection);
