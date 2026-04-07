@@ -709,34 +709,102 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 
 hitAttributeEXT vec3 hitNormal;
 
-float sdf_terrain(vec3 p) {
-	float h = p.y;
-	vec3 q = p * 0.02;
-	h -= 5.0 * (sin(q.x * 1.7) * cos(q.z * 1.3) +
-	             sin(q.x * 0.5 + q.z * 0.8) * 2.0 +
-	             sin(q.x * 3.1 + q.z * 2.7) * 0.5);
-	return h;
+// Self-contained noise matching dc-terrain's density function structure.
+// Uses hash-based gradient noise (no perm table SSBO needed).
+
+// dc-terrain default noise params
+const float primary_frequency = 0.02;
+const float primary_strength  = 1.2;
+const float warp_frequency    = 0.015;
+const float warp_strength     = 4.0;
+const float ridge_frequency   = 0.03;
+const float ridge_strength    = 0.5;
+const float detail_frequency  = 0.06;
+const float detail_strength   = 0.15;
+const float ground_bias       = 0.06;
+const int   primary_octaves   = 3;
+const int   warp_octaves      = 2;
+const int   ridge_octaves     = 2;
+const int   detail_octaves    = 2;
+
+// Hash-based 3D gradient noise (no lookup tables)
+vec3 hash3(vec3 p) {
+	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+	         dot(p, vec3(269.5, 183.3, 246.1)),
+	         dot(p, vec3(113.5, 271.9, 124.6)));
+	return fract(sin(p) * 43758.5453) * 2.0 - 1.0;
+}
+
+float gnoise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	vec3 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0)),
+	                    dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0)), u.x),
+	                mix(dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0)),
+	                    dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0)), u.x), u.y),
+	            mix(mix(dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1)),
+	                    dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1)), u.x),
+	                mix(dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1)),
+	                    dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1)), u.x), u.y), u.z);
+}
+
+float fbm(vec3 p, int octaves) {
+	float sum = 0.0, amp = 1.0, tot = 0.0;
+	for (int i = 0; i < octaves; i++) {
+		sum += gnoise(p) * amp;
+		tot += amp;
+		p *= 2.0;
+		amp *= 0.5;
+	}
+	return sum / tot;
+}
+
+float evaluate_density(vec3 p) {
+	// Domain warp
+	float wx = p.x + fbm(p * warp_frequency, warp_octaves) * warp_strength;
+	float wy = p.y + fbm((p + vec3(31.7, 47.3, 89.1)) * warp_frequency, warp_octaves) * warp_strength;
+	float wz = p.z + fbm((p + vec3(73.1, 11.9, 59.7)) * warp_frequency, warp_octaves) * warp_strength;
+	vec3 wp = vec3(wx, wy, wz);
+
+	// Ground plane + primary noise
+	float d = -p.y * ground_bias;
+	d += fbm(wp * primary_frequency, primary_octaves) * primary_strength;
+
+	// Ridged noise
+	float ridge_raw = fbm(wp * ridge_frequency, ridge_octaves);
+	float ridged = 1.0 - abs(ridge_raw);
+	ridged = ridged * ridged;
+	d += ridged * ridge_strength;
+
+	// Detail noise
+	d += fbm(wp * detail_frequency, detail_octaves) * detail_strength;
+
+	return d;
 }
 
 void main() {
 	vec3 ro = gl_ObjectRayOriginEXT;
 	vec3 rd = gl_ObjectRayDirectionEXT;
 	float t = gl_RayTminEXT;
-	for (int i = 0; i < 64; i++) {
+
+	for (int i = 0; i < 96; i++) {
 		if (t > gl_RayTmaxEXT) break;
 		vec3 p = ro + rd * t;
-		float d = sdf_terrain(p);
-		if (abs(d) < 0.001 * max(1.0, t)) {
-			vec2 e = vec2(0.01, -0.01);
+		float d = evaluate_density(p);
+
+		if (abs(d) < 0.002 * max(1.0, t)) {
+			vec2 e = vec2(0.05, -0.05);
 			hitNormal = normalize(
-				e.xyy * sdf_terrain(p + e.xyy) +
-				e.yyx * sdf_terrain(p + e.yyx) +
-				e.yxy * sdf_terrain(p + e.yxy) +
-				e.xxx * sdf_terrain(p + e.xxx));
+				e.xyy * evaluate_density(p + e.xyy) +
+				e.yyx * evaluate_density(p + e.yyx) +
+				e.yxy * evaluate_density(p + e.yxy) +
+				e.xxx * evaluate_density(p + e.xxx));
 			reportIntersectionEXT(t, 0u);
 			return;
 		}
-		t += max(abs(d) * 0.8, 0.01);
+
+		t += max(abs(d) * 0.7, 0.05);
 	}
 }
 )";
