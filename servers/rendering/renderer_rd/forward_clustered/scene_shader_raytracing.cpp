@@ -694,33 +694,69 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 	}
 
 	// Add procedural hit group for AABB intersection (terrain SDF etc.).
-	// The intersection shader is compiled from the #[intersection] stage template.
-	// The closest-hit for procedural geometry reads hitNormal from the intersection
-	// shader and shades with default material properties.
+	// Both intersection and closest-hit are compiled here as a pair to ensure
+	// they always appear together in the SBT. The base shader file does NOT
+	// include an #[intersection] stage — if it did, the internal ShaderRD
+	// compilation would create a PROCEDURAL_HIT_GROUP without a closest-hit.
 	{
-		// Check if intersection stage was compiled.
-		bool has_intersection = false;
-		for (int i = 0; i < stages.size(); i++) {
-			if (stages[i].shader_stage == RD::SHADER_STAGE_INTERSECTION) {
-				has_intersection = true;
-				break;
-			}
+		String error;
+
+		// Compile intersection shader from inline GLSL.
+		static const char *intersection_src = R"(
+#version 460
+#pragma shader_stage(intersection)
+#extension GL_EXT_ray_tracing : enable
+
+hitAttributeEXT vec3 hitNormal;
+
+float sdf_terrain(vec3 p) {
+	float h = p.y;
+	vec3 q = p * 0.02;
+	h -= 5.0 * (sin(q.x * 1.7) * cos(q.z * 1.3) +
+	             sin(q.x * 0.5 + q.z * 0.8) * 2.0 +
+	             sin(q.x * 3.1 + q.z * 2.7) * 0.5);
+	return h;
+}
+
+void main() {
+	vec3 ro = gl_ObjectRayOriginEXT;
+	vec3 rd = gl_ObjectRayDirectionEXT;
+	float t = gl_RayTminEXT;
+	for (int i = 0; i < 64; i++) {
+		if (t > gl_RayTmaxEXT) break;
+		vec3 p = ro + rd * t;
+		float d = sdf_terrain(p);
+		if (abs(d) < 0.001 * max(1.0, t)) {
+			vec2 e = vec2(0.01, -0.01);
+			hitNormal = normalize(
+				e.xyy * sdf_terrain(p + e.xyy) +
+				e.yyx * sdf_terrain(p + e.yyx) +
+				e.yxy * sdf_terrain(p + e.yxy) +
+				e.xxx * sdf_terrain(p + e.xxx));
+			reportIntersectionEXT(t, 0u);
+			return;
 		}
-		if (has_intersection) {
-			// Build a procedural closest-hit shader that reads vec3 hitNormal.
-			// Use the base closest-hit as template but replace hitAttributeEXT
-			// and compute_hit_data() with procedural versions.
+		t += max(abs(d) * 0.8, 0.01);
+	}
+}
+)";
+
+		RD::ShaderStageSPIRVData isect_stage;
+		isect_stage.shader_stage = RD::SHADER_STAGE_INTERSECTION;
+		isect_stage.spirv = RD::get_singleton()->shader_compile_spirv_from_source(
+				RD::SHADER_STAGE_INTERSECTION, String(intersection_src), RD::SHADER_LANGUAGE_GLSL, &error);
+		if (isect_stage.spirv.is_empty()) {
+			ERR_PRINT("Failed to compile intersection shader: " + error);
+		} else {
+			// Compile procedural closest-hit (reads hitNormal instead of attribs).
 			String base_ch_src = sources[RD::SHADER_STAGE_CLOSEST_HIT];
 			String proc_ch_src = base_ch_src;
-			// Replace hitAttribute declaration: vec2 attribs → vec3 hitNormal
 			proc_ch_src = proc_ch_src.replace(
 				"hitAttributeEXT vec2 attribs;",
 				"hitAttributeEXT vec3 hitNormal;");
-			// Add define so compute_hit_data() can use hitNormal
 			int ver_end = proc_ch_src.find("\n", proc_ch_src.find("#version"));
 			proc_ch_src = proc_ch_src.insert(ver_end + 1, "#define RT_PROCEDURAL_HIT_GROUP\n");
 
-			String error;
 			RD::ShaderStageSPIRVData proc_ch;
 			proc_ch.shader_stage = RD::SHADER_STAGE_CLOSEST_HIT;
 			proc_ch.spirv = RD::get_singleton()->shader_compile_spirv_from_source(
@@ -728,16 +764,12 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 			if (proc_ch.spirv.is_empty()) {
 				ERR_PRINT("Failed to compile procedural closest_hit: " + error);
 			} else {
-				// Insert procedural closest-hit right after the intersection stage.
-				// The Vulkan driver's hit group builder will pair them because
-				// intersection sets hit_group_index and closest-hit fills the CH slot.
-				for (int i = 0; i < stages.size(); i++) {
-					if (stages[i].shader_stage == RD::SHADER_STAGE_INTERSECTION) {
-						stages.insert(i + 1, proc_ch);
-						break;
-					}
-				}
-				procedural_hit_group_sbt_offset = active_custom_shaders.size() + 1; // HG index after all custom HGs
+				// Insert intersection + closest-hit as a pair after the miss stage.
+				// The Vulkan driver will create a PROCEDURAL_HIT_GROUP with both.
+				int insert_at = stages.size(); // end of stages
+				stages.push_back(isect_stage);
+				stages.push_back(proc_ch);
+				procedural_hit_group_sbt_offset = active_custom_shaders.size() + 1;
 			}
 		}
 	}

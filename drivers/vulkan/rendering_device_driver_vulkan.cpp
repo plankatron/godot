@@ -7618,27 +7618,34 @@ VkResult RenderingDeviceDriverVulkan::_raytracing_pipeline_stb_create(Raytracing
 	ERR_FAIL_COND_V_MSG(err, err, "vkGetRayTracingShaderGroupHandlesKHR failed with error " + itos(err) + ".");
 
 	uint8_t *sbt_ptr = buffer_map(rpi->sbt_buffer);
-	uint8_t *sbt_data = sbt_ptr;
-	uint32_t handle_index = 0;
 
-	// Raygen.
-	memcpy(sbt_data, handles_ptr + handle_index * handle_size, handle_size);
-	++handle_index;
+	// Sort handles into SBT regions by group type.
+	// vkGetRayTracingShaderGroupHandlesKHR returns handles in group creation
+	// order, NOT sorted by type. We must place each handle into the correct
+	// region (raygen/hit/miss) based on the group's type.
+	uint32_t raygen_offset = 0;
+	uint32_t hit_offset = 0;
+	uint32_t miss_offset = 0;
 
-	// Hit.
-	sbt_data = sbt_ptr + rpi->regions.raygen.size;
-	for (uint32_t i = 0; i < shader_info->region_count.hit_count; ++i) {
-		memcpy(sbt_data, handles_ptr + handle_index * handle_size, handle_size);
-		sbt_data += rpi->regions.hit.stride;
-		++handle_index;
-	}
+	for (uint32_t gi = 0; gi < shader_info->region_count.group_count; gi++) {
+		const VkRayTracingShaderGroupCreateInfoKHR &g = shader_info->vk_groups_create_info[gi];
+		const uint8_t *src = handles_ptr + gi * handle_size;
 
-	// Miss.
-	sbt_data = sbt_ptr + rpi->regions.raygen.size + rpi->regions.hit.size;
-	for (uint32_t i = 0; i < shader_info->region_count.miss_count; ++i) {
-		memcpy(sbt_data, handles_ptr + handle_index * handle_size, handle_size);
-		sbt_data += rpi->regions.miss.stride;
-		++handle_index;
+		if (g.type == VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR) {
+			// GENERAL groups are either raygen or miss — check the stage type.
+			VkShaderStageFlagBits stage_flag = shader_info->vk_stages_create_info[g.generalShader].stage;
+			if (stage_flag == VK_SHADER_STAGE_RAYGEN_BIT_KHR) {
+				memcpy(sbt_ptr + raygen_offset, src, handle_size);
+				raygen_offset += rpi->regions.raygen.stride;
+			} else if (stage_flag == VK_SHADER_STAGE_MISS_BIT_KHR) {
+				memcpy(sbt_ptr + rpi->regions.raygen.size + rpi->regions.hit.size + miss_offset, src, handle_size);
+				miss_offset += rpi->regions.miss.stride;
+			}
+		} else {
+			// TRIANGLES_HIT_GROUP or PROCEDURAL_HIT_GROUP — both go into hit region.
+			memcpy(sbt_ptr + rpi->regions.raygen.size + hit_offset, src, handle_size);
+			hit_offset += rpi->regions.hit.stride;
+		}
 	}
 
 	buffer_unmap(rpi->sbt_buffer);
