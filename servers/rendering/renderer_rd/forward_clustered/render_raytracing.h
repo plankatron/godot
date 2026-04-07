@@ -254,8 +254,9 @@ public:
 	struct InjectedBLAS {
 		RID blas;
 		Transform3D transform;
+		bool is_procedural = false; // true for AABB BLAS (uses intersection shader hit group)
 	};
-	static void inject_external_blas(const RID &p_blas, const Transform3D &p_transform);
+	static void inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural = false);
 	static void clear_injected_blas();
 	static LocalVector<InjectedBLAS> s_injected_blas;
 

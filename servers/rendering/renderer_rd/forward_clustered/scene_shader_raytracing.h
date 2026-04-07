@@ -87,7 +87,7 @@ public:
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 9;
 	constexpr static uint32_t RT_MAX_PAYLOAD_SIZE = 32;
-	constexpr static uint32_t RT_MAX_HIT_ATTRIB_SIZE = 8;
+	constexpr static uint32_t RT_MAX_HIT_ATTRIB_SIZE = 32; // vec2 barycentrics (triangles) or vec3 normal + padding (procedural)
 
 	// Pathtracing parameter indices - aliased from the shared enum in rendering_server_enums.h.
 	static constexpr int RT_PARAM_VIS_MODE = RSE::PT_PARAM_VIS_MODE;
@@ -337,6 +337,7 @@ public:
 	HashMap<uint32_t, RID> raytracing_pipelines;
 
 	HashMap<uint32_t, RID> multi_hg_shaders;
+	uint32_t procedural_hit_group_sbt_offset = 0; // SBT offset for AABB intersection hit group
 
 	struct TextureUniformInfo {
 		StringName name;
@@ -374,6 +375,7 @@ public:
 	void finalize_custom_shaders();
 
 	const CustomShaderEntry *get_custom_shader_entry(uint32_t p_hg_index) const;
+	uint32_t get_procedural_sbt_offset() const { return procedural_hit_group_sbt_offset; }
 
 	RID get_raytracing_pipeline(uint32_t p_rt_flags);
 

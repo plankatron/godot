@@ -53,8 +53,8 @@ HashMap<uint64_t, RenderRaytracing::CLASCollectionEntry> RenderRaytracing::s_cla
 
 static uint64_t s_next_clas_id = 1;
 
-void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform) {
-	s_injected_blas.push_back({ p_blas, p_transform });
+void RenderRaytracing::inject_external_blas(const RID &p_blas, const Transform3D &p_transform, bool p_procedural) {
+	s_injected_blas.push_back({ p_blas, p_transform, p_procedural });
 }
 
 void RenderRaytracing::clear_injected_blas() {
@@ -1453,15 +1453,22 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 		}
 	}
 
-	// Append externally injected BLAS (CLAS-backed terrain, etc.)
+	// Append externally injected BLAS (CLAS-backed terrain, procedural AABB, etc.)
 	for (const InjectedBLAS &ext : s_injected_blas) {
 		blass.push_back(ext.blas);
 		blas_transforms.push_back(ext.transform);
 		instance_flags.push_back(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE |
 			RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE);
-		sbt_offsets.push_back(0);    // default material hit group
 
-		// Default geometry/material data for external BLAS (opaque terrain).
+		if (ext.is_procedural) {
+			// Procedural AABB BLAS: use intersection shader hit group
+			uint32_t proc_sbt = SceneShaderRaytracing::get_singleton()->get_procedural_sbt_offset();
+			sbt_offsets.push_back(proc_sbt);
+		} else {
+			sbt_offsets.push_back(0); // default triangle hit group
+		}
+
+		// Default geometry/material data for external BLAS.
 		RT_GeometryData geo = {};
 		geometry_data.push_back(geo);
 		RT_MaterialData mat = {};
