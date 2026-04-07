@@ -350,6 +350,8 @@ public:
 		uint64_t source_hash = 0;
 		String fragment_code;
 		String fragment_globals;
+		String vertex_code;      // vertex() body for computing varyings in RT context
+		String varying_locals;   // local variable declarations replacing stripped "in" varyings
 		String uniform_members; // GLSL struct members for uniform buffer
 		uint32_t uniform_total_size = 0;
 		Vector<uint32_t> uniform_offsets;

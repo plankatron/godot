@@ -369,6 +369,48 @@ uint32_t SceneShaderRaytracing::register_custom_shader(uint32_t p_shader_id, RID
 		if (err == OK) {
 			entry.fragment_code = gen_code.code.has("fragment") ? gen_code.code["fragment"] : String();
 			entry.fragment_globals = gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT];
+
+			// Strip "layout(location=N) in" varying declarations from fragment_globals.
+			// In rasterization, these are interpolated outputs from the vertex shader.
+			// In RT closest-hit, there is no vertex stage — these would read undefined
+			// hit attribute data and crash the driver. Replace with local variable
+			// declarations initialized from RT hit data in the custom fragment setup.
+			String varying_locals;
+			{
+				String &fg = entry.fragment_globals;
+				int search_pos = 0;
+				while (search_pos < fg.length()) {
+					int loc = fg.find("layout(location=", search_pos);
+					if (loc < 0) break;
+					int paren_end = fg.find(")", loc);
+					if (paren_end < 0) break;
+					// Check if this is an "in" varying (not "out")
+					int in_pos = fg.find(" in ", paren_end);
+					if (in_pos < 0 || in_pos > paren_end + 5) {
+						search_pos = paren_end + 1;
+						continue;
+					}
+					int line_end = fg.find("\n", in_pos);
+					if (line_end < 0) line_end = fg.length();
+					// Extract type and name from "layout(...) in TYPE NAME;"
+					String decl_line = fg.substr(in_pos + 4, line_end - in_pos - 4).strip_edges();
+					// Remove trailing semicolon
+					if (decl_line.ends_with(";")) {
+						decl_line = decl_line.substr(0, decl_line.length() - 1);
+					}
+					// Convert to local variable (will be initialized in custom fragment setup)
+					varying_locals += decl_line + ";\n";
+					// Remove the entire line from fragment_globals
+					int line_start = fg.rfind("\n", loc);
+					line_start = (line_start < 0) ? 0 : line_start;
+					fg = fg.substr(0, line_start) + fg.substr(line_end);
+					search_pos = line_start;
+				}
+			}
+			if (!varying_locals.is_empty()) {
+				entry.vertex_code = gen_code.code.has("vertex") ? gen_code.code["vertex"] : String();
+				entry.varying_locals = varying_locals;
+			}
 			entry.uniform_members = gen_code.uniforms;
 			entry.uniform_total_size = gen_code.uniform_total_size;
 			entry.uniform_offsets = gen_code.uniform_offsets;
@@ -572,7 +614,31 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 			String ch_src = ch_template;
 			if (!entry.fragment_code.is_empty()) {
 				ch_src = ch_src.replace("/* RT_CUSTOM_FRAGMENT_GLOBALS */", entry.fragment_globals);
-				ch_src = ch_src.replace("/* RT_CUSTOM_FRAGMENT_CODE */", entry.fragment_code);
+				// If the shader had varyings, inject local declarations and run the
+				// vertex code (with builtins remapped to RT context) to initialize them
+				// before the fragment code executes.
+				String rt_fragment_code;
+				if (!entry.varying_locals.is_empty()) {
+					// Declare varying locals and run vertex code to initialize them.
+					// Builtins already renamed by shader compiler:
+					//   MODEL_MATRIX -> read_model_matrix (provided by custom_fragment_inc)
+					//   VERTEX -> vertex (provided by custom_fragment_inc, view-space)
+					//   NORMAL -> normal (provided by custom_fragment_inc, view-space)
+					// The vertex code needs world-space VERTEX/NORMAL, so provide them.
+					rt_fragment_code += "// RT varying locals\n";
+					rt_fragment_code += entry.varying_locals;
+					if (!entry.vertex_code.is_empty()) {
+						rt_fragment_code += "// RT vertex() with world-space inputs\n";
+						rt_fragment_code += "{\n";
+						rt_fragment_code += "  vec3 vertex = (inverse(read_model_matrix) * vec4(rt_hit_pos, 1.0)).xyz;\n";
+						rt_fragment_code += "  vec3 normal = normalize(inverse(transpose(mat3(read_model_matrix))) * rt_normal);\n";
+						rt_fragment_code += entry.vertex_code + "\n";
+						rt_fragment_code += "}\n";
+					}
+					rt_fragment_code += "\n";
+				}
+				rt_fragment_code += entry.fragment_code;
+				ch_src = ch_src.replace("/* RT_CUSTOM_FRAGMENT_CODE */", rt_fragment_code);
 			}
 			ch_src = ch_src.replace("/* RT_CUSTOM_UNIFORM_MEMBERS */", uniform_members);
 			ch_src = ch_src.replace("/* RT_CUSTOM_TEXTURE_DEFINES */", tex_defines);
@@ -593,7 +659,20 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 				String ah_src = ah_template;
 				if (!entry.fragment_code.is_empty()) {
 					ah_src = ah_src.replace("/* RT_CUSTOM_FRAGMENT_GLOBALS */", entry.fragment_globals);
-					ah_src = ah_src.replace("/* RT_CUSTOM_FRAGMENT_CODE */", entry.fragment_code);
+					String ah_fragment_code;
+					if (!entry.varying_locals.is_empty()) {
+						ah_fragment_code += entry.varying_locals;
+						if (!entry.vertex_code.is_empty()) {
+							ah_fragment_code += "{\n";
+							ah_fragment_code += "  vec3 vertex = (inverse(read_model_matrix) * vec4(rt_hit_pos, 1.0)).xyz;\n";
+							ah_fragment_code += "  vec3 normal = normalize(inverse(transpose(mat3(read_model_matrix))) * rt_normal);\n";
+							ah_fragment_code += entry.vertex_code + "\n";
+							ah_fragment_code += "}\n";
+						}
+						ah_fragment_code += "\n";
+					}
+					ah_fragment_code += entry.fragment_code;
+					ah_src = ah_src.replace("/* RT_CUSTOM_FRAGMENT_CODE */", ah_fragment_code);
 				}
 				ah_src = ah_src.replace("/* RT_CUSTOM_UNIFORM_MEMBERS */", uniform_members);
 				ah_src = ah_src.replace("/* RT_CUSTOM_TEXTURE_DEFINES */", tex_defines);
