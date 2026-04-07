@@ -356,6 +356,10 @@ RID RenderingDevice::blas_create_aabb(const PackedFloat32Array &p_aabb_data, uin
 	acceleration_structure.draw_tracker->acceleration_structure_driver_id = acceleration_structure.driver_id;
 	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
 
+	// Mark as needing build — will be built on the render thread via
+	// acceleration_structure_build() before first use in TLAS.
+	acceleration_structure.needs_build = true;
+
 	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
 #ifdef DEV_ENABLED
 	set_resource_name(id, "RID:" + itos(id.get_id()));
@@ -657,6 +661,15 @@ Error RenderingDevice::clas_blas_build(RID p_acceleration_structure) {
 	draw_graph.add_clas_build(accel->driver_id, accel->draw_tracker);
 
 	return OK;
+}
+
+Error RenderingDevice::acceleration_structure_build_if_needed(RID p_acceleration_structure) {
+	AccelerationStructure *accel = acceleration_structure_owner.get_or_null(p_acceleration_structure);
+	if (!accel || !accel->needs_build) {
+		return OK;
+	}
+	accel->needs_build = false;
+	return acceleration_structure_build(p_acceleration_structure);
 }
 
 /***************************/

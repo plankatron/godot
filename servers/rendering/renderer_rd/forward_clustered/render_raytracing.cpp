@@ -1453,10 +1453,11 @@ void RenderRaytracing::build_tlas(const RenderDataRD *p_render_data) {
 		}
 	}
 
-	// Build any procedural AABB BLAS that need GPU AS build.
+	// Build any procedural AABB BLAS that haven't been built yet.
 	for (const InjectedBLAS &ext : s_injected_blas) {
 		if (ext.is_procedural && ext.blas.is_valid()) {
-			RD::get_singleton()->acceleration_structure_build(ext.blas);
+			// Check needs_build flag and build if needed (we're on the render thread here).
+			RD::get_singleton()->acceleration_structure_build_if_needed(ext.blas);
 		}
 	}
 
