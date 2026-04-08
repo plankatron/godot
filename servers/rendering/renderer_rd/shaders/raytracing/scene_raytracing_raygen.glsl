@@ -440,10 +440,15 @@ void main() {
 	m.alpha = 1.0;
 	m.roughness = 0.6 + tri_noise * 0.2;
 	m.metalness = 0.0;
-	m.emissive = vec3(0.0);
+	// Fake direct lighting via emissive until shadow ray issue is resolved
+	float sun_dot = max(dot(world_normal, normalize(vec3(0.5, 0.8, -0.3))), 0.0);
+	m.emissive = m.albedo * sun_dot * 0.8;
 	m.normal = world_normal;
 
-	shade_and_bounce(h, m);
+	// Skip shade_and_bounce for procedural — just output emissive directly
+	// This avoids shadow ray intersection shader invocations (the main perf bottleneck)
+	payload.radiance += payload.throughput * m.emissive;
+	// Don't bounce — saves all secondary ray cost
 #else
 	// HG0: StandardMaterial3D evaluation.
 	MaterialData mat = materials[h.geometry_idx];
