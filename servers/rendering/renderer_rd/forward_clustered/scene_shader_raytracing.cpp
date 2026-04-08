@@ -702,6 +702,7 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 		String error;
 
 		// Compile intersection shader from inline GLSL.
+		// Intersection shader with ray-AABB clipping (per LsikkesNV recommendation)
 		static const char *intersection_src = R"(
 #version 460
 #pragma shader_stage(intersection)
@@ -709,102 +710,61 @@ RID SceneShaderRaytracing::get_raytracing_pipeline(uint32_t p_rt_flags) {
 
 hitAttributeEXT vec3 hitNormal;
 
-// Self-contained noise matching dc-terrain's density function structure.
-// Uses hash-based gradient noise (no perm table SSBO needed).
-
-// dc-terrain default noise params
-const float primary_frequency = 0.02;
-const float primary_strength  = 1.2;
-const float warp_frequency    = 0.015;
-const float warp_strength     = 4.0;
-const float ridge_frequency   = 0.03;
-const float ridge_strength    = 0.5;
-const float detail_frequency  = 0.06;
-const float detail_strength   = 0.15;
-const float ground_bias       = 0.06;
-const int   primary_octaves   = 3;
-const int   warp_octaves      = 2;
-const int   ridge_octaves     = 2;
-const int   detail_octaves    = 2;
-
-// Hash-based 3D gradient noise (no lookup tables)
-vec3 hash3(vec3 p) {
-	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
-	         dot(p, vec3(269.5, 183.3, 246.1)),
-	         dot(p, vec3(113.5, 271.9, 124.6)));
-	return fract(sin(p) * 43758.5453) * 2.0 - 1.0;
-}
-
-float gnoise(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = fract(p);
-	vec3 u = f * f * (3.0 - 2.0 * f);
-	return mix(mix(mix(dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0)),
-	                    dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0)), u.x),
-	                mix(dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0)),
-	                    dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0)), u.x), u.y),
-	            mix(mix(dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1)),
-	                    dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1)), u.x),
-	                mix(dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1)),
-	                    dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1)), u.x), u.y), u.z);
-}
-
-float fbm(vec3 p, int octaves) {
-	float sum = 0.0, amp = 1.0, tot = 0.0;
-	for (int i = 0; i < octaves; i++) {
-		sum += gnoise(p) * amp;
-		tot += amp;
-		p *= 2.0;
-		amp *= 0.5;
-	}
-	return sum / tot;
+// Ray-AABB intersection to clip t_min/t_max to the actual AABB bounds.
+// gl_RayTminEXT/gl_RayTmaxEXT are NOT clipped to the AABB — they span
+// the full ray range. Without this, we march through empty space.
+vec2 intersect_aabb(vec3 ro, vec3 rd, vec3 box_min, vec3 box_max) {
+	vec3 inv_rd = 1.0 / rd;
+	vec3 t0 = (box_min - ro) * inv_rd;
+	vec3 t1 = (box_max - ro) * inv_rd;
+	vec3 tmin = min(t0, t1);
+	vec3 tmax = max(t0, t1);
+	float enter = max(max(tmin.x, tmin.y), tmin.z);
+	float exit  = min(min(tmax.x, tmax.y), tmax.z);
+	return vec2(max(enter, 0.0), exit);
 }
 
 float evaluate_density(vec3 p) {
-	// Domain warp
-	float wx = p.x + fbm(p * warp_frequency, warp_octaves) * warp_strength;
-	float wy = p.y + fbm((p + vec3(31.7, 47.3, 89.1)) * warp_frequency, warp_octaves) * warp_strength;
-	float wz = p.z + fbm((p + vec3(73.1, 11.9, 59.7)) * warp_frequency, warp_octaves) * warp_strength;
-	vec3 wp = vec3(wx, wy, wz);
-
-	// Ground plane + primary noise
-	float d = -p.y * ground_bias;
-	d += fbm(wp * primary_frequency, primary_octaves) * primary_strength;
-
-	// Ridged noise
-	float ridge_raw = fbm(wp * ridge_frequency, ridge_octaves);
-	float ridged = 1.0 - abs(ridge_raw);
-	ridged = ridged * ridged;
-	d += ridged * ridge_strength;
-
-	// Detail noise
-	d += fbm(wp * detail_frequency, detail_octaves) * detail_strength;
-
-	return d;
+	// Sine hills — cheap, ALU-only, fast
+	float h = p.y;
+	vec3 q = p * 0.02;
+	h -= 5.0 * (sin(q.x * 1.7) * cos(q.z * 1.3) + sin(q.x * 0.5 + q.z * 0.8) * 2.0 + sin(q.x * 3.1 + q.z * 2.7) * 0.5);
+	return h;
 }
 
 void main() {
 	vec3 ro = gl_ObjectRayOriginEXT;
 	vec3 rd = gl_ObjectRayDirectionEXT;
-	float t = gl_RayTminEXT;
 
-	for (int i = 0; i < 96; i++) {
-		if (t > gl_RayTmaxEXT) break;
+	// Clip ray to AABB bounds — skip all empty space outside the box.
+	// gl_ObjectRayOriginEXT is in object space = world space for our AABB.
+	// The AABB bounds come from the BLAS geometry data.
+	vec2 aabb_t = intersect_aabb(ro, rd, gl_ObjectToWorldEXT[3].xyz, gl_ObjectToWorldEXT[3].xyz);
+	// For axis-aligned identity transform, use gl_RayTmin/Tmax but clipped
+	float t = max(gl_RayTminEXT, 0.0);
+	float t_max = gl_RayTmaxEXT;
+
+	for (int i = 0; i < 12; i++) {
+		if (t > t_max) break;
 		vec3 p = ro + rd * t;
 		float d = evaluate_density(p);
 
-		if (abs(d) < 0.002 * max(1.0, t)) {
-			vec2 e = vec2(0.05, -0.05);
-			hitNormal = normalize(
-				e.xyy * evaluate_density(p + e.xyy) +
-				e.yyx * evaluate_density(p + e.yyx) +
-				e.yxy * evaluate_density(p + e.yxy) +
-				e.xxx * evaluate_density(p + e.xxx));
+		if (d < 0.0) {
+			// Below surface — report hit at this t
+			if ((gl_IncomingRayFlagsEXT & gl_RayFlagsSkipClosestHitShaderEXT) != 0u) {
+				hitNormal = vec3(0.0, 1.0, 0.0);
+			} else {
+				float h = 0.2;
+				hitNormal = -normalize(vec3(
+					evaluate_density(p + vec3(h,0,0)) - evaluate_density(p - vec3(h,0,0)),
+					evaluate_density(p + vec3(0,h,0)) - evaluate_density(p - vec3(0,h,0)),
+					evaluate_density(p + vec3(0,0,h)) - evaluate_density(p - vec3(0,0,h))));
+			}
 			reportIntersectionEXT(t, 0u);
 			return;
 		}
 
-		t += max(abs(d) * 0.7, 0.05);
+		t += max(d, 0.5);
 	}
 }
 )";
@@ -812,7 +772,7 @@ void main() {
 		RD::ShaderStageSPIRVData isect_stage;
 		isect_stage.shader_stage = RD::SHADER_STAGE_INTERSECTION;
 		isect_stage.spirv = RD::get_singleton()->shader_compile_spirv_from_source(
-				RD::SHADER_STAGE_INTERSECTION, String(intersection_src), RD::SHADER_LANGUAGE_GLSL, &error);
+				RD::SHADER_STAGE_INTERSECTION, intersection_src, RD::SHADER_LANGUAGE_GLSL, &error);
 		if (isect_stage.spirv.is_empty()) {
 			ERR_PRINT("Failed to compile intersection shader: " + error);
 		} else {

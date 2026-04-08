@@ -428,9 +428,9 @@ void main() {
 	grass_t *= height_fade;
 	float dirt_t = smoothstep(0.3, 0.5, up_factor) * (1.0 - grass_t);
 
-	vec3 grass_color = vec3(0.25, 0.45, 0.15);
-	vec3 rock_color = vec3(0.35, 0.30, 0.25);
-	vec3 dirt_color = vec3(0.30, 0.22, 0.12);
+	vec3 grass_color = vec3(0.4, 0.65, 0.25);
+	vec3 rock_color = vec3(0.55, 0.50, 0.45);
+	vec3 dirt_color = vec3(0.50, 0.40, 0.30);
 	vec3 base_rock = rock_color * (0.8 + detail * 0.4);
 	vec3 base_grass = grass_color * (0.85 + detail * 0.3);
 	vec3 base_dirt = dirt_color * (0.85 + detail * 0.3);
@@ -438,7 +438,7 @@ void main() {
 	MaterialResult m;
 	m.albedo = mix(mix(base_rock, base_dirt, dirt_t), base_grass, grass_t);
 	m.alpha = 1.0;
-	m.roughness = 0.85 + tri_noise * 0.15;
+	m.roughness = 0.6 + tri_noise * 0.2;
 	m.metalness = 0.0;
 	m.emissive = vec3(0.0);
 	m.normal = world_normal;

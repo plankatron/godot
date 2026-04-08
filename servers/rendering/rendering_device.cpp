@@ -498,6 +498,26 @@ void RenderingDevice::rt_clear_injected_blas() {
 	RendererSceneRenderImplementation::RenderRaytracing::clear_injected_blas();
 }
 
+// Static density data for intersection shader
+uint64_t RenderingDevice::s_rt_density_address = 0;
+int RenderingDevice::s_rt_density_grid_size = 0;
+Vector3 RenderingDevice::s_rt_density_aabb_min;
+Vector3 RenderingDevice::s_rt_density_aabb_max;
+RID RenderingDevice::s_rt_density_texture;
+
+void RenderingDevice::rt_set_density_data(int64_t p_address, int p_grid_size, const Vector3 &p_aabb_min, const Vector3 &p_aabb_max) {
+	s_rt_density_address = (uint64_t)p_address;
+	s_rt_density_grid_size = p_grid_size;
+	s_rt_density_aabb_min = p_aabb_min;
+	s_rt_density_aabb_max = p_aabb_max;
+}
+
+void RenderingDevice::rt_set_density_texture(RID p_texture, const Vector3 &p_aabb_min, const Vector3 &p_aabb_max) {
+	s_rt_density_texture = p_texture;
+	s_rt_density_aabb_min = p_aabb_min;
+	s_rt_density_aabb_max = p_aabb_max;
+}
+
 BitField<RDD::BufferUsageBits> RenderingDevice::_creation_to_usage_bits(BitField<RD::BufferCreationBits> p_creation_bits) {
 	BitField<RDD::BufferUsageBits> usage = 0;
 
@@ -8633,6 +8653,8 @@ void RenderingDevice::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rt_free_clas", "id"), &RenderingDevice::rt_free_clas);
 	ClassDB::bind_method(D_METHOD("rt_inject_external_blas", "blas", "transform", "procedural", "noise_params_address", "noise_perm_address"), &RenderingDevice::rt_inject_external_blas, DEFVAL(false), DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("rt_clear_injected_blas"), &RenderingDevice::rt_clear_injected_blas);
+	ClassDB::bind_method(D_METHOD("rt_set_density_data", "address", "grid_size", "aabb_min", "aabb_max"), &RenderingDevice::rt_set_density_data);
+	ClassDB::bind_method(D_METHOD("rt_set_density_texture", "texture", "aabb_min", "aabb_max"), &RenderingDevice::rt_set_density_texture);
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_create", "instance_count", "creation_bits"), &RenderingDevice::tlas_instances_buffer_create, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("tlas_instances_buffer_fill", "instances_buffer", "blases", "transforms"), &RenderingDevice::_tlas_instances_buffer_fill);
 	ClassDB::bind_method(D_METHOD("tlas_create", "instances_buffer"), &RenderingDevice::tlas_create);

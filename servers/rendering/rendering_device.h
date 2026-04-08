@@ -1346,6 +1346,13 @@ public:
 	void rt_inject_external_blas(RID p_blas, const Transform3D &p_transform, bool p_procedural = false,
 		int64_t p_noise_params_address = 0, int64_t p_noise_perm_address = 0);
 	void rt_clear_injected_blas();
+	void rt_set_density_data(int64_t p_address, int p_grid_size, const Vector3 &p_aabb_min, const Vector3 &p_aabb_max);
+	void rt_set_density_texture(RID p_texture, const Vector3 &p_aabb_min, const Vector3 &p_aabb_max);
+	static uint64_t s_rt_density_address;
+	static int s_rt_density_grid_size;
+	static Vector3 s_rt_density_aabb_min;
+	static Vector3 s_rt_density_aabb_max;
+	static RID s_rt_density_texture;
 	RID tlas_instances_buffer_create(uint32_t p_instance_count, BitField<BufferCreationBits> p_creation_bits = 0);
 	void tlas_instances_buffer_fill(RID p_buffer, const Vector<RID> &p_blases, VectorView<Transform3D> p_transforms, VectorView<uint32_t> p_instance_flags = VectorView<uint32_t>(), VectorView<uint32_t> p_sbt_offsets = VectorView<uint32_t>());
 	RID tlas_create(RID p_instances_buffer);
