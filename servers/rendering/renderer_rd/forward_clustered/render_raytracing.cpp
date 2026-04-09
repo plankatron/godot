@@ -1253,15 +1253,7 @@ void RenderRaytracing::build_acceleration_structures(const LocalVector<RID> &p_d
 		}
 	}
 
-	// If we have externally-built BLAS (CLAS), insert a global memory barrier
-	// to ensure their data is visible to the TLAS build and ray traversal.
-	// The draw_graph only generates per-resource barriers for tracked ASes,
-	// so external BLAS data needs this explicit barrier.
-	if (!s_injected_blas.is_empty()) {
-		RD::get_singleton()->barrier(
-			RD::BARRIER_MASK_ALL_BARRIERS,
-			RD::BARRIER_MASK_ALL_BARRIERS);
-	}
+	// Barriers for externally-built BLAS are handled automatically by RenderingDevice.
 
 	// Create TLAS from all BLAS instances
 	if (blass.size() > 0) {
