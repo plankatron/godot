@@ -400,3 +400,6 @@ $RECYCLE.BIN/
 *.msp
 *.lnk
 *.generated.props
+
+# NGX DLSS runtime libraries (fetched via script, not vendored in git).
+thirdparty/ngx/lib/linux_x86_64/libnvidia-ngx-dlss*.so*
