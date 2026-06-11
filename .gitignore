@@ -401,5 +401,7 @@ $RECYCLE.BIN/
 *.lnk
 *.generated.props
 
-# NGX DLSS runtime libraries (fetched via script, not vendored in git).
-thirdparty/ngx/lib/linux_x86_64/libnvidia-ngx-dlss*.so*
+# NGX DLSS runtime libraries are vendored (DLSS SDK v310.5.3, NVIDIA/DLSS rel/).
+# Negate the blanket *.so rule above so they stay tracked.
+!thirdparty/ngx/lib/linux_x86_64/libnvidia-ngx-dlss.so.310.5.3
+!thirdparty/ngx/lib/linux_x86_64/libnvidia-ngx-dlssd.so.310.5.3
