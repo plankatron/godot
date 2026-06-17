@@ -637,6 +637,15 @@ if env["use_aftermath"]:
 if env["use_ngx_dlss"]:
     if env["platform"] == "linuxbsd" and env["arch"] == "x86_64":
         ngx_dir = "#thirdparty/ngx"
+        # The NGX SDK is not vendored; it is fetched on demand by install_dlss_linux.py.
+        # The static link library doubles as a sentinel that the SDK has been installed.
+        ngx_static_lib = "thirdparty/ngx/lib/linux_x86_64/libnvsdk_ngx.a"
+        if not os.path.isfile(ngx_static_lib):
+            print_error(
+                'NVIDIA DLSS SDK not found. Run "python misc/scripts/install_dlss_linux.py" to download '
+                "it, or build with use_ngx_dlss=no to disable DLSS."
+            )
+            Exit(255)
         env.AppendUnique(CPPDEFINES=["NGX_DLSS_ENABLED"])
         env.Append(CPPPATH=[ngx_dir + "/include"])
         # NGX headers include <vulkan/vulkan.h> — ensure Godot's bundled Vulkan headers are findable
