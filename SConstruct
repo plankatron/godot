@@ -637,12 +637,32 @@ if env["use_aftermath"]:
 if env["use_ngx_dlss"]:
     if env["platform"] == "linuxbsd" and env["arch"] == "x86_64":
         ngx_dir = "#thirdparty/ngx"
-        env.AppendUnique(CPPDEFINES=["NGX_DLSS_ENABLED"])
-        env.Append(CPPPATH=[ngx_dir + "/include"])
-        # NGX headers include <vulkan/vulkan.h> — ensure Godot's bundled Vulkan headers are findable
-        env.Append(CPPPATH=["#thirdparty/vulkan/include"])
-        env.Append(LIBPATH=[ngx_dir + "/lib/linux_x86_64"])
-        env.Append(LIBS=["nvsdk_ngx"])
+        # The NGX SDK is not vendored; it is fetched on demand by install_dlss_linux.py.
+        # The static link library doubles as a sentinel that the SDK has been installed.
+        ngx_static_lib = "thirdparty/ngx/lib/linux_x86_64/libnvsdk_ngx.a"
+        if not os.path.isfile(ngx_static_lib):
+            print_warning("NVIDIA DLSS SDK not found (thirdparty/ngx is fetched on demand, not vendored).")
+            if sys.stdin.isatty() and input(
+                "Download the NVIDIA DLSS SDK now with misc/scripts/install_dlss_linux.py? [y/N] "
+            ).strip().lower() in ("y", "yes"):
+                import subprocess
+
+                try:
+                    subprocess.run([sys.executable, "misc/scripts/install_dlss_linux.py"], check=True)
+                except subprocess.CalledProcessError:
+                    print_warning("DLSS SDK download failed; see output above.")
+        if os.path.isfile(ngx_static_lib):
+            env.AppendUnique(CPPDEFINES=["NGX_DLSS_ENABLED"])
+            env.Append(CPPPATH=[ngx_dir + "/include"])
+            # NGX headers include <vulkan/vulkan.h> — ensure Godot's bundled Vulkan headers are findable
+            env.Append(CPPPATH=["#thirdparty/vulkan/include"])
+            env.Append(LIBPATH=[ngx_dir + "/lib/linux_x86_64"])
+            env.Append(LIBS=["nvsdk_ngx"])
+        else:
+            print_warning(
+                'Building without DLSS. Run "python misc/scripts/install_dlss_linux.py" then rebuild to enable it.'
+            )
+            env["use_ngx_dlss"] = False
     else:
         env["use_ngx_dlss"] = False
 
