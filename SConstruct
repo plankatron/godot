@@ -201,7 +201,7 @@ opts.Add(BoolVariable("metal", "Enable the Metal rendering driver on supported p
 opts.Add(BoolVariable("use_volk", "Use the volk library to load the Vulkan loader dynamically", True))
 opts.Add(BoolVariable("use_streamline", "Enable Streamline support", True))
 opts.Add(BoolVariable("use_aftermath", "Enable NVIDIA Nsight Aftermath GPU crash dump support", False))
-opts.Add(BoolVariable("use_ngx_dlss", "Enable NVIDIA NGX DLSS on Linux (bypasses Streamline)", True))
+opts.Add(BoolVariable("use_ngx_dlss", "Enable NVIDIA NGX DLSS on Linux (bypasses Streamline)", False))
 opts.Add(BoolVariable("accesskit", "Enable the AccessKit driver for screen reader support", True))
 opts.Add(BoolVariable("angle", "Enable the ANGLE rendering driver for OpenGL ES 3.0 on supported platforms", True))
 opts.Add(BoolVariable("sdl", "Enable the SDL3 input driver", True))
