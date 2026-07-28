@@ -720,7 +720,7 @@ Update instructions:
 ## meshoptimizer
 
 - Upstream: https://github.com/zeux/meshoptimizer
-- Version: 1.1.1 (b22872835dbabc56a6e4a366ea9917f62b7daf1a, 2026)
+- Version: 1.1 (dc9d09ed83e1004aef47a1c3c597e0ec64848a37, 2026)
 - License: MIT
 
 Files extracted from upstream repository:
@@ -844,7 +844,7 @@ Collection of single-file libraries used in Godot components.
     - `polypartition-0002-shadow-warning.patch` ([GH-66808](https://github.com/godotengine/godot/pull/66808))
 - `qoa.{c,h}`
   * Upstream: https://github.com/phoboslab/qoa
-  * Version: git (1bf9bc04673df55dc554021b768006836f69d53a, 2026)
+  * Version: git (ae07b57deb98127a5b40916cb57775823d7437d2, 2025)
   * License: MIT
   * Modifications: Added implementation through `qoa.c`.
 - `r128.{c,h}`
@@ -887,6 +887,22 @@ Files extracted from the upstream source:
 Patches:
 
 - `0001-remove-unused-save-features.patch` ([GH-113965](https://github.com/godotengine/godot/issues/113965))
+
+
+## ngx
+
+- Upstream: https://github.com/NVIDIA/DLSS
+- Version: 310.5.3 (2025)
+- License: NVIDIA RTX SDK License
+
+Files extracted from upstream source:
+
+- Headers from `include/`: `nvsdk_ngx*.h`
+- Linux static library: `lib/Linux_x86_64/dev/libnvsdk_ngx.a`
+
+Used by the direct NGX DLSS backend on Linux (see `servers/rendering/renderer_rd/effects/dlss.cpp`
+under `NGX_DLSS_ENABLED`). The runtime `.so` files (`libnvidia-ngx-dlss*.so`) are provided
+separately at `lib/linux_x86_64/` and loaded at runtime.
 
 
 ## openxr
@@ -952,7 +968,7 @@ Files extracted from upstream source:
 ## re-spirv
 
 - Upstream: https://github.com/renderbag/re-spirv
-- Version: git (29a77fca357567d00aa37b8ffde19c19cfe477c4, 2026)
+- Version: git (c1853b0221cd43866b792406f55c4ab10a0b4503, 2026)
 - License: MIT
 
 Files extracted from upstream source:
@@ -1018,8 +1034,6 @@ Patches:
 - `0005-fix-libudev-dbus.patch` ([GH-108373](https://github.com/godotengine/godot/pull/108373))
 - `0006-fix-cs-environ.patch` ([GH-109283](https://github.com/godotengine/godot/pull/109283))
 - `0007-shield-duplicate-macos.patch` ([GH-115510](https://github.com/godotengine/godot/pull/115510))
-- `0008-fix-linux-joycon-serial-num.patch` ([GH-113873](https://github.com/godotengine/godot/pull/113873))
-- `0009-update-device-blocklist.patch` ([GH-119403](https://github.com/godotengine/godot/pull/119403))
 
 
 ## spirv-cross
