@@ -400,3 +400,9 @@ $RECYCLE.BIN/
 *.msp
 *.lnk
 *.generated.props
+
+# The NVIDIA NGX/DLSS SDK is NOT vendored. Headers, static library and runtime libraries are
+# all fetched on demand from NVIDIA's public DLSS SDK with:
+#   python misc/scripts/install_dlss_linux.py
+/thirdparty/ngx/include/
+/thirdparty/ngx/lib/
