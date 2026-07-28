@@ -33,6 +33,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/error/error_backtrace.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/object/class_db.h"
@@ -358,7 +359,16 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 					uint32_t index_stride = (index_buffer->format == INDEX_BUFFER_FORMAT_UINT32 ? sizeof(uint32_t) : sizeof(uint16_t));
 					ERR_FAIL_COND_V_MSG((t_in.index_offset + t_in.index_count * index_stride) > index_buffer->size, RID(), "The specified index offset and count are outside the range of the index buffer.");
-					ERR_FAIL_COND_V_MSG(index_buffer->max_index >= t_in.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
+					// max_index is a DEBUG-ONLY diagnostic. index_buffer_create only scans
+					// the data under DEBUG_ENABLED, and sets 0xFFFFFFFF as an "unknown"
+					// sentinel both in release builds and whenever a buffer is created
+					// without initial data. Asserting on it unconditionally therefore
+					// failed EVERY indexed mesh in a template_release build
+					// (0xFFFFFFFF >= vertex_count is always true), so no BLAS was ever
+					// built, the TLAS was empty, and raytracing_list_bind_uniform_set
+					// then crashed on a null uniform set. Skip the check when the value
+					// is the sentinel — it stays a real guard wherever it is real data.
+					ERR_FAIL_COND_V_MSG(index_buffer->max_index != 0xFFFFFFFF && index_buffer->max_index >= t_in.vertex_count, RID(), "The index buffer contains an index that is outside the specified vertex range.");
 
 					t_out.index_buffer = index_buffer->driver_id;
 					t_out.index_offset = t_in.index_offset;
@@ -7848,10 +7858,16 @@ void RenderingDevice::_free_internal(RID p_id) {
 		frames[frame].buffers_to_dispose_of.push_back(*hit_sbt);
 		hit_sbt_owner.free(p_id);
 	} else {
+		static int trace_count = 0;
+		String trace_suffix;
+		if (trace_count < 20) {
+			trace_count++;
+			trace_suffix = "\n" + backtrace_dump() + "   [trace " + itos(trace_count) + "/20]";
+		}
 #ifdef DEV_ENABLED
-		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name);
+		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name + trace_suffix);
 #else
-		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()));
+		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + trace_suffix);
 #endif
 	}
 
