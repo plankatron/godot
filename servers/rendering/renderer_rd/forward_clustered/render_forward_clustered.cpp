@@ -2524,6 +2524,19 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			ERR_PRINT_ONCE_ED("Failed to get raytracing pipeline. Aborting render.");
 			return;
 		}
+		// Set 0 can be unset: build_tlas returns nullptr when p_render_data->rt_instances
+		// is empty, and rt_uniform_set is only assigned when it succeeds — but this
+		// dispatch block does not test for that, so it bound a null set and
+		// raytracing_list_bind_uniform_set took the process down. Skip the frame
+		// instead, exactly as the bindless set below already does.
+		//
+		// NOTE: this is a CRASH GUARD, not a fix. If it trips, path tracing renders
+		// nothing that frame and the real question is why the TLAS had no instances.
+		if (!rt_uniform_set.is_valid()) {
+			ERR_PRINT_ONCE("Raytracing: no TLAS uniform set (empty rt_instances?) — skipping trace.");
+			RD::get_singleton()->draw_command_end_label();
+			return;
+		}
 		RD::RaytracingListID raytracing_list = RD::get_singleton()->raytracing_list_begin();
 		RD::get_singleton()->raytracing_list_bind_raytracing_pipeline(raytracing_list, rt_pipeline);
 		RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, rt_uniform_set, 0);
