@@ -2524,6 +2524,24 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			ERR_PRINT_ONCE_ED("Failed to get raytracing pipeline. Aborting render.");
 			return;
 		}
+		// Set 0 can legitimately be unset. scene_features.rt is decided purely from
+		// the environment (see _setup_rt), but the TLAS build additionally requires
+		// p_render_data->rt_instances to be non-null -- and render_empty_scene()
+		// calls render_scene() without it, so a PT-enabled scenario with no camera
+		// reaches here with rt_uniform_set null. update_uniform_set() can also
+		// return an invalid RID (null rb_data, or tlas/uniform-set creation
+		// failure). Binding null took the process down; skip the trace instead,
+		// exactly as the bindless set below already does.
+		//
+		// There is nothing to trace on such a frame, so skipping is correct rather
+		// than merely defensive -- but if this fires on a frame that SHOULD have
+		// geometry, the trace is being skipped and the real question is why the
+		// TLAS had no instances.
+		if (!rt_uniform_set.is_valid()) {
+			ERR_PRINT_ONCE("Raytracing: no TLAS uniform set for this frame - skipping the trace.");
+			RD::get_singleton()->draw_command_end_label();
+			return;
+		}
 		RD::RaytracingListID raytracing_list = RD::get_singleton()->raytracing_list_begin();
 		RD::get_singleton()->raytracing_list_bind_raytracing_pipeline(raytracing_list, rt_pipeline);
 		RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, rt_uniform_set, 0);
