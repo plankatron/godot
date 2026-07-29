@@ -46,9 +46,30 @@ using namespace RendererSceneRenderImplementation;
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+BindlessBlock::TextureKind RenderRaytracing::_texture_kind_for_type(ShaderLanguage::DataType p_type) {
+	switch (p_type) {
+		case ShaderLanguage::TYPE_SAMPLER2DARRAY:
+		case ShaderLanguage::TYPE_ISAMPLER2DARRAY:
+		case ShaderLanguage::TYPE_USAMPLER2DARRAY:
+			return BindlessBlock::TEXTURE_2D_ARRAY;
+		case ShaderLanguage::TYPE_SAMPLER3D:
+		case ShaderLanguage::TYPE_ISAMPLER3D:
+		case ShaderLanguage::TYPE_USAMPLER3D:
+			return BindlessBlock::TEXTURE_3D;
+		case ShaderLanguage::TYPE_SAMPLERCUBE:
+			return BindlessBlock::TEXTURE_CUBE;
+		case ShaderLanguage::TYPE_SAMPLERCUBEARRAY:
+			return BindlessBlock::TEXTURE_CUBE_ARRAY;
+		default:
+			return BindlessBlock::TEXTURE_2D;
+	}
+}
+
 void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 	owner = p_owner;
-	bindless_block = memnew(BindlessBlock);
+	for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+		bindless_blocks[k] = memnew(BindlessBlock);
+	}
 
 	// Initialize merged MultiMesh BLAS compute shader.
 	Vector<String> merge_modes;
@@ -75,9 +96,16 @@ RenderRaytracing::~RenderRaytracing() {
 		mat_ubo_pool_buffer = RID();
 	}
 
-	if (bindless_block) {
-		memdelete(bindless_block);
-		bindless_block = nullptr;
+	if (bindless_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(bindless_uniform_set)) {
+		RD::get_singleton()->free_rid(bindless_uniform_set);
+	}
+	bindless_uniform_set = RID();
+
+	for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+		if (bindless_blocks[k]) {
+			memdelete(bindless_blocks[k]);
+			bindless_blocks[k] = nullptr;
+		}
 	}
 	if (shader) {
 		memdelete(shader);
@@ -599,10 +627,21 @@ void RenderRaytracing::prepare_frame() {
 	cache_hits = 0;
 	cache_misses = 0;
 
-	if (!bindless_block->is_initialized()) {
-		bindless_block->initialize(RD::get_singleton());
+	// The whole set is rebuilt as a unit, so its liveness is evaluated once and
+	// handed to every table.
+	const bool bindless_set_valid = bindless_uniform_set.is_valid() &&
+			RD::get_singleton()->uniform_set_is_valid(bindless_uniform_set);
+	if (!bindless_set_valid) {
+		bindless_uniform_set = RID();
 	}
-	bindless_block->begin_frame();
+
+	for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+		BindlessBlock *block = bindless_blocks[k];
+		if (!block->is_initialized()) {
+			block->initialize(RD::get_singleton(), (BindlessBlock::TextureKind)k);
+		}
+		block->begin_frame(bindless_set_valid);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1484,12 +1523,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	// Albedo is a color texture - needs sRGB->linear conversion
 	RID albedo_rd = get_material_texture("texture_albedo", true);
 	if (albedo_rd.is_valid()) {
-		mat.albedo_texture_idx = bindless_block->add_texture(albedo_rd);
+		mat.albedo_texture_idx = _bindless(BindlessBlock::TEXTURE_2D)->add_texture(albedo_rd);
 	}
 
 	RID normal_rd = get_material_texture("texture_normal");
 	if (normal_rd.is_valid()) {
-		mat.normal_texture_idx = bindless_block->add_texture(normal_rd);
+		mat.normal_texture_idx = _bindless(BindlessBlock::TEXTURE_2D)->add_texture(normal_rd);
 		mat.flags |= RT_MAT_FLAG_HAS_NORMAL_MAP;
 
 		Variant normal_scale_var = material_storage->material_get_param(p_material_rid, "normal_scale");
@@ -1500,18 +1539,18 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 
 	RID orm_rd = get_material_texture("texture_orm");
 	if (orm_rd.is_valid()) {
-		mat.orm_texture_idx = bindless_block->add_texture(orm_rd);
+		mat.orm_texture_idx = _bindless(BindlessBlock::TEXTURE_2D)->add_texture(orm_rd);
 	} else {
 		RID roughness_rd = get_material_texture("texture_roughness");
 		if (roughness_rd.is_valid()) {
-			mat.orm_texture_idx = bindless_block->add_texture(roughness_rd);
+			mat.orm_texture_idx = _bindless(BindlessBlock::TEXTURE_2D)->add_texture(roughness_rd);
 		}
 	}
 
 	// Emission is a color texture - needs sRGB->linear conversion
 	RID emission_rd = get_material_texture("texture_emission", true);
 	if (emission_rd.is_valid()) {
-		mat.emission_texture_idx = bindless_block->add_texture(emission_rd);
+		mat.emission_texture_idx = _bindless(BindlessBlock::TEXTURE_2D)->add_texture(emission_rd);
 		mat.flags |= RT_MAT_FLAG_HAS_EMISSION_TEX;
 		// Set sensible defaults for emission when texture is present
 		mat.emission_color[0] = 1.0f;
@@ -1576,12 +1615,18 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				const SceneShaderRaytracing::TextureUniformInfo &tui = cse->texture_uniforms[ti];
 				uint32_t bindless_idx = 0;
 
+				// The index is looked up in the table matching the uniform's sampler
+				// type; the generated GLSL indexes that same table (see
+				// SceneShaderRaytracing tex_defines), so the two must agree.
+				const BindlessBlock::TextureKind kind = _texture_kind_for_type(tui.type);
+				BindlessBlock *block = _bindless(kind);
+
 				if (tui.is_global) {
 					RID tex_rid = material_storage->global_shader_uniform_get_texture(tui.name);
 					if (tex_rid.is_valid()) {
 						RID rd_tex = ts->texture_get_rd_texture(tex_rid, tui.use_color);
 						if (rd_tex.is_valid()) {
-							bindless_idx = bindless_block->add_texture(rd_tex);
+							bindless_idx = block->add_texture(rd_tex);
 						}
 					}
 				} else {
@@ -1591,13 +1636,16 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 						if (tex_rid.is_valid()) {
 							RID rd_tex = ts->texture_get_rd_texture(tex_rid, tui.use_color);
 							if (rd_tex.is_valid()) {
-								bindless_idx = bindless_block->add_texture(rd_tex);
+								bindless_idx = block->add_texture(rd_tex);
 							}
 						}
 					}
 				}
 
-				if (bindless_idx == 0 && tui.hint != ShaderLanguage::ShaderNode::Uniform::HINT_NONE) {
+				// The hint defaults below are all 2D textures. For any other kind,
+				// index 0 already IS that table's default of the correct type.
+				if (bindless_idx == 0 && kind == BindlessBlock::TEXTURE_2D &&
+						tui.hint != ShaderLanguage::ShaderNode::Uniform::HINT_NONE) {
 					using Hint = ShaderLanguage::ShaderNode::Uniform::Hint;
 					RID default_tex;
 					switch (tui.hint) {
@@ -1618,7 +1666,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 							break;
 					}
 					if (default_tex.is_valid()) {
-						bindless_idx = bindless_block->add_texture(default_tex);
+						bindless_idx = block->add_texture(default_tex);
 					}
 				}
 
@@ -3272,9 +3320,37 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		p_state->scene_uniform_set = result;
 
 		// === SET 1: Bindless textures ===
-		if (bindless_block && bindless_block->is_initialized()) {
-			bindless_block->finalize(shader_rd, 1);
-			bindless_uniform_set = bindless_block->get_uniform_set();
+		// All texture kinds share set 1, so the set is rebuilt as a unit whenever
+		// any table changed.
+		bool bindless_ready = true;
+		bool bindless_dirty = !bindless_uniform_set.is_valid();
+		for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+			if (!bindless_blocks[k] || !bindless_blocks[k]->is_initialized()) {
+				bindless_ready = false;
+				break;
+			}
+			bindless_dirty = bindless_dirty || bindless_blocks[k]->needs_rebuild();
+		}
+
+		if (bindless_ready && bindless_dirty) {
+			Vector<RD::Uniform> bindless_uniforms;
+			for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+				bindless_blocks[k]->collect_uniform(bindless_uniforms);
+			}
+
+			if (bindless_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(bindless_uniform_set)) {
+				RD::get_singleton()->free_rid(bindless_uniform_set);
+			}
+			bindless_uniform_set = RD::get_singleton()->uniform_set_create(bindless_uniforms, shader_rd, 1);
+
+			if (bindless_uniform_set.is_valid()) {
+				RD::get_singleton()->set_resource_name(bindless_uniform_set, "Bindless Texture Set");
+				for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+					bindless_blocks[k]->mark_rebuilt();
+				}
+			} else {
+				ERR_PRINT_ONCE("RT: failed to create the bindless texture uniform set.");
+			}
 		}
 	}
 

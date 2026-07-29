@@ -344,6 +344,9 @@ public:
 
 	struct TextureUniformInfo {
 		StringName name;
+		// Selects which bindless table the index refers to. A sampler2DArray
+		// cannot be constructed from a texture2D, so the table must match.
+		ShaderLanguage::DataType type = ShaderLanguage::TYPE_SAMPLER2D;
 		ShaderLanguage::ShaderNode::Uniform::Hint hint = ShaderLanguage::ShaderNode::Uniform::HINT_NONE;
 		bool use_color = false;
 		bool is_global = false;
@@ -361,7 +364,7 @@ public:
 		uint32_t uniform_total_size = 0;
 		Vector<uint32_t> uniform_offsets;
 		HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> uniforms;
-		Vector<TextureUniformInfo> texture_uniforms; // Sampler2D packed as bindless indices after UBO
+		Vector<TextureUniformInfo> texture_uniforms; // Samplers packed as bindless indices after UBO
 		bool uses_alpha_clip = false; // Writes ALPHA_SCISSOR_THRESHOLD; needs per-HG any-hit
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
@@ -450,6 +453,7 @@ private:
 	// Source-hash slot management.
 	uint32_t _register_slot(uint32_t p_shader_id, RID p_material, bool p_is_procedural);
 	bool _preprocess_shader(RID p_material, bool p_is_procedural, CustomShaderEntry &r_entry);
+	static const char *_bindless_table_name(ShaderLanguage::DataType p_type);
 	void _strip_texture_globals(String &r_globals, const String &p_tex_name);
 	void _finalize_uniforms_with_textures(CustomShaderEntry &r_entry, const ShaderCompiler::GeneratedCode &p_gen_code, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, bool p_strip_intersection_globals);
 

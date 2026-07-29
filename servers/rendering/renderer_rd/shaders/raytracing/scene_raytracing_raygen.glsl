@@ -285,7 +285,21 @@ void main() {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT tlas;
 layout(location = 0) rayPayloadInEXT PathPayload payload;
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless texture tables. One per texture type: GLSL cannot build a
+// sampler2DArray/sampler3D/samplerCube from a texture2D, so a single 2D table
+// makes every array/volume/cube uniform generate an invalid sampler constructor
+// and fails the whole hit group.
+//
+// Only ONE binding per set may be variable-count, and it must be the one with
+// the LARGEST binding number, so the typed tables are fixed-capacity here and
+// the 2D table -- the only one that needs to scale -- stays unbounded and last.
+// Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
+// binding numbers with BindlessBlock::TextureKind.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 
@@ -501,7 +515,21 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 };
 // clang-format on
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless texture tables. One per texture type: GLSL cannot build a
+// sampler2DArray/sampler3D/samplerCube from a texture2D, so a single 2D table
+// makes every array/volume/cube uniform generate an invalid sampler constructor
+// and fails the whole hit group.
+//
+// Only ONE binding per set may be variable-count, and it must be the one with
+// the LARGEST binding number, so the typed tables are fixed-capacity here and
+// the 2D table -- the only one that needs to scale -- stays unbounded and last.
+// Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
+// binding numbers with BindlessBlock::TextureKind.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 
@@ -620,7 +648,21 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 };
 // clang-format on
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless texture tables. One per texture type: GLSL cannot build a
+// sampler2DArray/sampler3D/samplerCube from a texture2D, so a single 2D table
+// makes every array/volume/cube uniform generate an invalid sampler constructor
+// and fails the whole hit group.
+//
+// Only ONE binding per set may be variable-count, and it must be the one with
+// the LARGEST binding number, so the typed tables are fixed-capacity here and
+// the 2D table -- the only one that needs to scale -- stays unbounded and last.
+// Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
+// binding numbers with BindlessBlock::TextureKind.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 

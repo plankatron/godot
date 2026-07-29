@@ -32,31 +32,47 @@
 
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 
-void BindlessBlock::initialize(RenderingDevice *p_rd) {
+void BindlessBlock::initialize(RenderingDevice *p_rd, TextureKind p_kind) {
 	ERR_FAIL_NULL(p_rd);
 
 	rd = p_rd;
+	kind = p_kind;
 
-	default_texture = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(
-			RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
+	RendererRD::TextureStorage::DefaultRDTexture default_id = RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE;
+	switch (kind) {
+		case TEXTURE_2D_ARRAY:
+			default_id = RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_WHITE;
+			break;
+		case TEXTURE_3D:
+			default_id = RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_WHITE;
+			break;
+		case TEXTURE_CUBE:
+			default_id = RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_CUBEMAP_WHITE;
+			break;
+		case TEXTURE_CUBE_ARRAY:
+			default_id = RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_CUBEMAP_ARRAY_WHITE;
+			break;
+		default:
+			break;
+	}
+
+	default_texture = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(default_id);
 	textures.push_back(default_texture);
 	texture_to_index[default_texture] = 0;
+	needs_refinalize = true;
 }
 
-void BindlessBlock::begin_frame() {
+void BindlessBlock::begin_frame(bool p_set_valid) {
 	if (!is_initialized()) {
 		return;
 	}
 
-	bool set_valid = uniform_set.is_valid() && rd->uniform_set_is_valid(uniform_set);
-	if (set_valid) {
+	if (p_set_valid) {
 		return;
 	}
 
 	// Uniform set was externally invalidated (a texture was destroyed/recreated).
 	// Scrub dead RIDs: replace with default and add slots to the freelist.
-	uniform_set = RID();
-
 	texture_to_index.clear();
 	texture_to_index[default_texture] = 0;
 
@@ -90,14 +106,13 @@ uint32_t BindlessBlock::add_texture(RID p_texture) {
 		return it->value;
 	}
 
-	if (textures.size() >= MAX_BINDLESS_TEXTURES && free_indices_count == 0) {
+	const uint32_t capacity = is_unbounded(kind) ? MAX_BINDLESS_TEXTURES : TYPED_TABLE_CAPACITY;
+	if (textures.size() >= capacity && free_indices_count == 0) {
 		ERR_PRINT_ONCE("BindlessBlock: Maximum texture count exceeded. Using default texture.");
 		return 0;
 	}
 
-	if (is_finalized()) {
-		needs_refinalize = true;
-	}
+	needs_refinalize = true;
 
 	uint32_t index;
 	if (free_indices_count > 0) {
@@ -113,46 +128,37 @@ uint32_t BindlessBlock::add_texture(RID p_texture) {
 	return index;
 }
 
-void BindlessBlock::finalize(RID p_shader, uint32_t p_set_index) {
+void BindlessBlock::collect_uniform(Vector<RD::Uniform> &r_uniforms) const {
 	ERR_FAIL_COND_MSG(!is_initialized(), "BindlessBlock not initialized.");
 	ERR_FAIL_COND_MSG(textures.is_empty(), "BindlessBlock has no textures.");
 
-	if (is_finalized() && !needs_refinalize && rd->uniform_set_is_valid(uniform_set)) {
-		return;
-	}
-
-	if (uniform_set.is_valid() && rd->uniform_set_is_valid(uniform_set)) {
-		rd->free_rid(uniform_set);
-	}
-	uniform_set = RID();
-
-	Vector<RD::Uniform> uniforms;
-
 	RD::Uniform u;
 	u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-	u.binding = 0;
-	u.variable_count = true;
+	u.binding = get_binding(kind);
+	u.variable_count = is_unbounded(kind);
+
 	for (uint32_t i = 0; i < textures.size(); i++) {
 		u.append_id(textures[i]);
 	}
-	uniforms.push_back(u);
 
-	uniform_set = rd->uniform_set_create(uniforms, p_shader, p_set_index);
-	ERR_FAIL_COND_MSG(!uniform_set.is_valid(), "Failed to create bindless uniform set.");
-	rd->set_resource_name(uniform_set, "Bindless Texture Set");
+	// A bounded binding gets no PARTIALLY_BOUND flag, so every descriptor in the
+	// declared array must be written; pad the tail with this kind's default.
+	if (!is_unbounded(kind)) {
+		for (uint32_t i = textures.size(); i < TYPED_TABLE_CAPACITY; i++) {
+			u.append_id(default_texture);
+		}
+	}
 
-	needs_refinalize = false;
+	r_uniforms.push_back(u);
 }
 
 void BindlessBlock::clear() {
-	if (uniform_set.is_valid() && rd && rd->uniform_set_is_valid(uniform_set)) {
-		rd->free_rid(uniform_set);
-	}
-	uniform_set = RID();
+	// The uniform set is shared across kinds and owned by the caller.
 	textures.clear();
 	texture_to_index.clear();
 	free_indices.clear();
 	free_indices_count = 0;
+	needs_refinalize = true;
 	rd = nullptr;
 }
 
