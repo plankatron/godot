@@ -12,7 +12,6 @@ struct VertexAttributes {
 	vec3 tangent;
 	float bitangent_sign;
 	vec4 color;
-	vec4 custom[4]; // CUSTOM0-3; vec4(0) when the surface has no such array.
 	bool has_uv;
 	bool has_normal;
 	bool has_tangent;
@@ -285,8 +284,7 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 #define FETCH_UV (1u << 0)
 #define FETCH_TBN (1u << 1)
 #define FETCH_COLOR (1u << 2)
-#define FETCH_CUSTOM (1u << 3)
-#define FETCH_ALL (FETCH_UV | FETCH_TBN | FETCH_COLOR | FETCH_CUSTOM)
+#define FETCH_ALL (FETCH_UV | FETCH_TBN | FETCH_COLOR)
 
 #ifdef RT_HIT_ATTRIBS_DECLARED
 VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs, uint fetch_flags) {
@@ -296,10 +294,6 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 	attrs.tangent = vec3(1.0, 0.0, 0.0);
 	attrs.bitangent_sign = 1.0;
 	attrs.color = vec4(1.0);
-	attrs.custom[0] = vec4(0.0);
-	attrs.custom[1] = vec4(0.0);
-	attrs.custom[2] = vec4(0.0);
-	attrs.custom[3] = vec4(0.0);
 	attrs.has_uv = false;
 	attrs.has_normal = false;
 	attrs.has_tangent = false;
@@ -318,15 +312,6 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 	if ((fetch_flags & FETCH_COLOR) != 0u && geom.color_byte_offset != OFFSET_NONE) {
 		attrs.color = fetch_color(geom, i0, i1, i2, bary);
 		attrs.has_color = true;
-	}
-
-	// fetch_custom early-outs per index, so a surface with no custom arrays pays
-	// four compares rather than four buffer reads.
-	if ((fetch_flags & FETCH_CUSTOM) != 0u) {
-		attrs.custom[0] = fetch_custom(geom, 0u, i0, i1, i2, bary);
-		attrs.custom[1] = fetch_custom(geom, 1u, i0, i1, i2, bary);
-		attrs.custom[2] = fetch_custom(geom, 2u, i0, i1, i2, bary);
-		attrs.custom[3] = fetch_custom(geom, 3u, i0, i1, i2, bary);
 	}
 
 	if ((fetch_flags & FETCH_TBN) != 0u && geom.normal_byte_offset != OFFSET_NONE) {

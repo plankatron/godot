@@ -295,10 +295,10 @@ layout(location = 0) rayPayloadInEXT PathPayload payload;
 // the 2D table -- the only one that needs to scale -- stays unbounded and last.
 // Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
 // binding numbers with BindlessBlock::TextureKind.
-layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
-layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
-layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
-layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[32];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[32];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[32];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[32];
 layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
@@ -379,10 +379,19 @@ void main() {
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;
 	vec4 rt_color = h.color;
-	vec4 rt_custom0 = h.custom[0];
-	vec4 rt_custom1 = h.custom[1];
-	vec4 rt_custom2 = h.custom[2];
-	vec4 rt_custom3 = h.custom[3];
+	// Fetched here rather than carried through HitData/VertexAttributes: those
+	// structs are shared with the DEFAULT hit group, and four extra vec4s of
+	// live state cost register pressure (and so occupancy) on every hit shader,
+	// including the ones that never touch CUSTOM. fetch_custom early-outs on
+	// surfaces without the array, so this is cheap when unused.
+	GeometryData rt_cgeom = geometries[h.geometry_idx];
+	uint rt_ci0, rt_ci1, rt_ci2;
+	get_triangle_indices(rt_cgeom, rt_ci0, rt_ci1, rt_ci2);
+	vec3 rt_cbary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+	vec4 rt_custom0 = fetch_custom(rt_cgeom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	vec4 rt_custom1 = fetch_custom(rt_cgeom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	vec4 rt_custom2 = fetch_custom(rt_cgeom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	vec4 rt_custom3 = fetch_custom(rt_cgeom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
 	vec3 rt_normal = h.geometry_normal;
 	vec3 rt_tangent = h.tangent;
 	vec3 rt_bitangent = h.bitangent;
@@ -529,10 +538,10 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 // the 2D table -- the only one that needs to scale -- stays unbounded and last.
 // Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
 // binding numbers with BindlessBlock::TextureKind.
-layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
-layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
-layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
-layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[32];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[32];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[32];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[32];
 layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
@@ -666,10 +675,10 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 // the 2D table -- the only one that needs to scale -- stays unbounded and last.
 // Keep these sizes in sync with BindlessBlock::TYPED_TABLE_CAPACITY, and the
 // binding numbers with BindlessBlock::TextureKind.
-layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
-layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
-layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
-layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[32];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[32];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[32];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[32];
 layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"

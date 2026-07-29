@@ -62,7 +62,7 @@ public:
 	// Fixed capacity of the typed (bounded) tables. Bounded bindings do not get
 	// PARTIALLY_BOUND, so these are always written in full, padded with the
 	// kind's default texture.
-	constexpr static uint32_t TYPED_TABLE_CAPACITY = 256;
+	constexpr static uint32_t TYPED_TABLE_CAPACITY = 32;
 
 	static bool is_unbounded(TextureKind p_kind) { return p_kind == TEXTURE_2D; }
 	static uint32_t get_binding(TextureKind p_kind) { return (uint32_t)p_kind; }
