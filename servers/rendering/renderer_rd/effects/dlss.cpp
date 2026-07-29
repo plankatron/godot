@@ -606,6 +606,14 @@ public:
 	NVSDK_NGX_Handle *dlss_rr_handle = nullptr;
 	NVSDK_NGX_Handle *dlss_sr_handle = nullptr;
 	bool feature_created = false;
+	// DLSS-RR camera matrices. These MUST outlive the evaluate() call: the NGX
+	// helper hands them to NVSDK_NGX_Parameter_SetVoidPointer, which stores the
+	// POINTER rather than copying, and NGX dereferences it during evaluation --
+	// including on later frames and on the SR path, which never sets them. Held
+	// as stack locals they dangled the moment evaluate() returned, which is what
+	// produced "WorldToScreenMatrix not invertible!" every frame.
+	float world_to_view_matrix[16] = {};
+	float view_to_clip_matrix[16] = {};
 	NVSDK_NGX_PerfQuality_Value perf_quality = NVSDK_NGX_PerfQuality_Value_Balanced;
 	uint32_t render_width = 0;
 	uint32_t render_height = 0;
@@ -1034,25 +1042,24 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			eval.pInSpecularHitDistance = &hit_dist_res;
 		}
 
-		// View/projection matrices for DLSS-RR
+		// View/projection matrices for DLSS-RR. Stored on the context, NOT on the
+		// stack -- see the declaration: NGX keeps the pointer and reads it later.
 		Transform3D view_matrix = p_params.cam_transform.affine_inverse();
-		Projection view_proj(view_matrix);
-		float world_to_view[16];
-		float view_to_clip[16];
+		Projection world_to_view(view_matrix);
 		for (int i = 0; i < 4; i++) {
-			world_to_view[i * 4 + 0] = view_proj.columns[0][i];
-			world_to_view[i * 4 + 1] = view_proj.columns[1][i];
-			world_to_view[i * 4 + 2] = view_proj.columns[2][i];
-			world_to_view[i * 4 + 3] = view_proj.columns[3][i];
+			ctx->world_to_view_matrix[i * 4 + 0] = world_to_view.columns[0][i];
+			ctx->world_to_view_matrix[i * 4 + 1] = world_to_view.columns[1][i];
+			ctx->world_to_view_matrix[i * 4 + 2] = world_to_view.columns[2][i];
+			ctx->world_to_view_matrix[i * 4 + 3] = world_to_view.columns[3][i];
 		}
 		for (int i = 0; i < 4; i++) {
-			view_to_clip[i * 4 + 0] = p_params.cam_projection.columns[0][i];
-			view_to_clip[i * 4 + 1] = p_params.cam_projection.columns[1][i];
-			view_to_clip[i * 4 + 2] = p_params.cam_projection.columns[2][i];
-			view_to_clip[i * 4 + 3] = p_params.cam_projection.columns[3][i];
+			ctx->view_to_clip_matrix[i * 4 + 0] = p_params.cam_projection.columns[0][i];
+			ctx->view_to_clip_matrix[i * 4 + 1] = p_params.cam_projection.columns[1][i];
+			ctx->view_to_clip_matrix[i * 4 + 2] = p_params.cam_projection.columns[2][i];
+			ctx->view_to_clip_matrix[i * 4 + 3] = p_params.cam_projection.columns[3][i];
 		}
-		eval.pInWorldToViewMatrix = world_to_view;
-		eval.pInViewToClipMatrix = view_to_clip;
+		eval.pInWorldToViewMatrix = ctx->world_to_view_matrix;
+		eval.pInViewToClipMatrix = ctx->view_to_clip_matrix;
 
 		NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSSD_EXT(vk_cmd, ctx->dlss_rr_handle, g_ngx_params, &eval);
 
