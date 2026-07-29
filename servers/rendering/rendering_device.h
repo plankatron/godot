@@ -1912,6 +1912,14 @@ protected:
 
 public:
 	void _free_internal(RID p_id);
+#ifdef DEBUG_ENABLED
+	// Every RID this device has successfully freed. Used only to classify an
+	// invalid free as a DOUBLE free (stale handle held past the resource's life)
+	// versus an ID that was never valid here (uninitialised/corrupt). Debug-only:
+	// it grows with the number of freed resources and is a diagnostic, not a
+	// correctness mechanism.
+	HashSet<uint64_t> _dbg_freed_ids;
+#endif
 	void _begin_frame(bool p_presented = false);
 	void _end_frame();
 	void _execute_frame(bool p_present);

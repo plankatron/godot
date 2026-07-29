@@ -7728,6 +7728,12 @@ void RenderingDevice::free_rid(RID p_rid) {
 }
 
 void RenderingDevice::_free_internal(RID p_id) {
+#ifdef DEBUG_ENABLED
+	// Set only on the invalid-free path below, so the tail of this function can
+	// record which IDs were genuinely freed. That history is what lets a later
+	// invalid free be reported as a DOUBLE free rather than just "invalid".
+	bool dbg_was_invalid = false;
+#endif
 #ifdef DEV_ENABLED
 	String resource_name;
 	if (resource_names.has(p_id)) {
@@ -7858,6 +7864,9 @@ void RenderingDevice::_free_internal(RID p_id) {
 		frames[frame].buffers_to_dispose_of.push_back(*hit_sbt);
 		hit_sbt_owner.free(p_id);
 	} else {
+#ifdef DEBUG_ENABLED
+		dbg_was_invalid = true;
+#endif
 		static int trace_count = 0;
 		String trace_suffix;
 		if (trace_count < 20) {
@@ -7875,11 +7884,31 @@ void RenderingDevice::_free_internal(RID p_id) {
 		static int invalid_free_count = 0;
 		invalid_free_count++;
 
+		// backtrace_dump() yields nothing usable in these builds even with
+		// debug_symbols, so instead of asking WHERE the free came from, answer the
+		// question that actually splits the candidates: was this ID ever valid?
+		//
+		//   "double free"  -> it was allocated and freed by us before, so something
+		//                     is holding a stale handle (e.g. a cache that outlived
+		//                     the resource) and freeing it a second time.
+		//   "never valid"  -> it was never a live RID here: uninitialised or
+		//                     corrupted memory, or an ID from another RD instance.
+		//
+		// The RID is also decoded: RID_Alloc packs (index << 32) | validator, so a
+		// recurring index with a changing validator is slot reuse -- the signature
+		// of stale handles surviving a free/realloc cycle.
+		String dbg_decoded;
+#ifdef DEBUG_ENABLED
+		String dbg_kind = _dbg_freed_ids.has(p_id.get_id()) ? "DOUBLE FREE (freed before)" : "never valid";
+		dbg_decoded = " [index=" + itos(p_id.get_id() >> 32) +
+				" validator=" + itos(p_id.get_id() & 0xFFFFFFFF) + " " + dbg_kind + "]";
+#endif
+
 		if (invalid_free_count <= PRINT_LIMIT) {
 #ifdef DEV_ENABLED
-			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name + trace_suffix);
+			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name + dbg_decoded + trace_suffix);
 #else
-			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + trace_suffix);
+			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + dbg_decoded + trace_suffix);
 #endif
 			if (invalid_free_count == PRINT_LIMIT) {
 				ERR_PRINT("Attempted to free invalid ID: reached " + itos(PRINT_LIMIT) +
@@ -7889,6 +7918,12 @@ void RenderingDevice::_free_internal(RID p_id) {
 			ERR_PRINT("Attempted to free invalid ID: " + itos(invalid_free_count) + " total occurrences so far.");
 		}
 	}
+
+#ifdef DEBUG_ENABLED
+	if (!dbg_was_invalid) {
+		_dbg_freed_ids.insert(p_id.get_id());
+	}
+#endif
 
 	frames_pending_resources_for_processing = uint32_t(frames.size());
 }
