@@ -620,7 +620,13 @@ public:
 	uint32_t output_width = 0;
 	uint32_t output_height = 0;
 
-	virtual ~NGXDLSSContext() {
+	// Which kind of feature feature_created refers to. RR and SR are distinct NGX
+	// features with separate handles, so switching between them at runtime has to
+	// tear the old one down -- otherwise the evaluate path picks the branch for
+	// the newly requested mode and finds a null handle.
+	bool feature_is_rr = false;
+
+	void release_feature() {
 		if (dlss_rr_handle) {
 			NVSDK_NGX_VULKAN_ReleaseFeature(dlss_rr_handle);
 			dlss_rr_handle = nullptr;
@@ -629,6 +635,11 @@ public:
 			NVSDK_NGX_VULKAN_ReleaseFeature(dlss_sr_handle);
 			dlss_sr_handle = nullptr;
 		}
+		feature_created = false;
+	}
+
+	virtual ~NGXDLSSContext() {
+		release_feature();
 	}
 };
 } // namespace RendererRD
@@ -934,6 +945,14 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 	bool use_dlss_rr = p_params.dlss_rr && g_ngx_dlss_rr_available;
 
+	// Ray Reconstruction and Super Resolution are separate NGX features with
+	// separate handles. Toggling between them at runtime (a settings change) must
+	// destroy the existing one, or creation is skipped as already-done and the
+	// evaluate branch for the newly requested mode dereferences a null handle.
+	if (ctx->feature_created && ctx->feature_is_rr != use_dlss_rr) {
+		ctx->release_feature();
+	}
+
 	// Create NGX feature on first use
 	if (!ctx->feature_created) {
 		NVSDK_NGX_Result result;
@@ -959,6 +978,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 			if (NVSDK_NGX_SUCCEED(result)) {
 				ctx->feature_created = true;
+				ctx->feature_is_rr = true;
 				print_line("[NGX DLSS] DLSS-RR feature created successfully");
 			} else {
 				WARN_PRINT(vformat("[NGX DLSS] DLSS-RR creation failed (0x%x), falling back to DLSS-SR", (uint32_t)result));
@@ -989,6 +1009,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 				return;
 			}
 			ctx->feature_created = true;
+			ctx->feature_is_rr = false;
 			use_dlss_rr = false;
 			print_line("[NGX DLSS] DLSS-SR feature created successfully");
 		}
@@ -1089,6 +1110,9 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		eval.InMVScaleX = (float)ctx->render_width;
 		eval.InMVScaleY = (float)ctx->render_height;
 
+		// Defensive: the mode-change path above should always have recreated the
+		// feature, but never hand NGX a null handle.
+		ERR_FAIL_NULL_MSG(ctx->dlss_sr_handle, "[NGX DLSS] SR evaluate with no SR feature.");
 		NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSS_EXT(vk_cmd, ctx->dlss_sr_handle, g_ngx_params, &eval);
 		if (NVSDK_NGX_FAILED(result)) {
 			ERR_PRINT(vformat("[NGX DLSS] DLSS-SR evaluate failed: 0x%x", (uint32_t)result));
