@@ -85,7 +85,13 @@ struct alignas(16) RT_GeometryData {
 	// For deformed geometry: previous-frame position buffer used for motion vectors.
 	uint32_t prev_vertex_buffer_address_lo;
 	uint32_t prev_vertex_buffer_address_hi;
-	uint32_t _pad[5];
+	// CUSTOM0-3 attribute location, one packed word each:
+	//   bits 0-23  byte offset inside attribute_stride
+	//   bits 24-31 ARRAY_CUSTOM_* format
+	// RT_OFFSET_NONE (all bits set) when the surface lacks that custom array --
+	// unambiguous because format 0xFF is not a valid ARRAY_CUSTOM_* value.
+	uint32_t custom_packed[4];
+	uint32_t _pad[1];
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 

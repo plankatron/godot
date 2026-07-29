@@ -9,6 +9,7 @@
 //   vec3  rt_tangent        -- world-space tangent
 //   vec3  rt_bitangent      -- world-space bitangent
 //   bool  rt_front_face     -- true if front-face hit
+//   vec4  rt_custom0..3     -- CUSTOM0-3 vertex attributes (vec4(0) if absent)
 //
 // Required bindings/types:
 //   materials[], CustomMaterialUniforms, scene_data_block
@@ -47,6 +48,10 @@ binormal = mat3(rt_world_to_object_decomp) * rt_bitangent;
 uv_interp = rt_uv;
 uv2_interp = rt_uv;
 color_interp = rt_color;
+custom0_attrib = rt_custom0;
+custom1_attrib = rt_custom1;
+custom2_attrib = rt_custom2;
+custom3_attrib = rt_custom3;
 view = -gl_WorldRayDirectionEXT;
 rt_front_facing = rt_front_face;
 rt_screen_uv = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy);

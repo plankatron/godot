@@ -17,6 +17,14 @@ vec3 binormal = vec3(0.0, 1.0, 0.0);
 vec2 uv_interp = vec2(0.0);
 vec2 uv2_interp = vec2(0.0);
 vec4 color_interp = vec4(1.0);
+// ShaderCompiler renames CUSTOM0-3 to these (see actions.renames in
+// SceneShaderRaytracing), so they must exist even when the surface has no such
+// array -- otherwise any shader touching CUSTOM0 fails to compile and takes its
+// whole hit group down.
+vec4 custom0_attrib = vec4(0.0);
+vec4 custom1_attrib = vec4(0.0);
+vec4 custom2_attrib = vec4(0.0);
+vec4 custom3_attrib = vec4(0.0);
 vec3 view = vec3(0.0, 0.0, -1.0);
 mat4 read_model_matrix = mat4(1.0);
 mat4 read_view_matrix = mat4(1.0);
