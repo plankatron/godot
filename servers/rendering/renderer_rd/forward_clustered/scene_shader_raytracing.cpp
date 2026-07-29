@@ -1584,6 +1584,13 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 
+		// RT-only. A path tracer evaluates the material once per bounce per
+		// sample, so letting a shader cheapen itself away from the camera-visible
+		// hit scales with pt_bounces. Absent under rasterization, so guard uses
+		// behind the RT define.
+		actions.renames["BOUNCE_INDEX"] = "rt_bounce_index";
+		actions.renames["PRIMARY_HIT"] = "rt_primary_hit";
+
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";
 		actions.renames["CAMERA_DIRECTION_WORLD"] = "inv_view_matrix[2].xyz";

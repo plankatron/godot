@@ -17,6 +17,11 @@
 MaterialData rt_mat = materials[rt_geometry_idx];
 material = CustomMaterialUniforms(rt_mat.uniform_address);
 
+// packed_bounces_flags is a plain field on the payload, so this is a mask rather
+// than a full path_unpack.
+rt_bounce_index = get_total_bounces(payload.packed_bounces_flags);
+rt_primary_hit = (rt_bounce_index == 0u);
+
 // Matrices.
 mat4 rt_view_matrix = transpose(mat4(scene_data_block.data.view_matrix[0],
 		scene_data_block.data.view_matrix[1],

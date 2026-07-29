@@ -448,7 +448,15 @@ void main() {
 	// Normal mapping.
 	vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
 	vec3 final_normal = h.geometry_normal;
-	if ((mat.flags & 1u) != 0u) {
+	// Indirect bounces reach the image only through the throughput, so the detail
+	// maps are not worth their cost there: the material is evaluated once per
+	// bounce per sample. Albedo and emission still matter (they carry the colour
+	// of bounced light), but the normal map and the ORM lookup are skipped past
+	// the camera-visible hit, falling back to the geometric normal and the
+	// material's scalar roughness/metallic.
+	bool rt_full_detail = (get_total_bounces(payload.packed_bounces_flags) == 0u);
+
+	if (rt_full_detail && (mat.flags & 1u) != 0u) {
 		vec3 normal_sample = sample_bindless_texture(mat.normal_texture_idx, uv).rgb;
 		tangent_space_normal.xy = normal_sample.xy * 2.0 - 1.0;
 		tangent_space_normal.z = sqrt(max(0.0, 1.0 - dot(tangent_space_normal.xy, tangent_space_normal.xy)));
@@ -458,9 +466,13 @@ void main() {
 	// Texture sampling.
 	vec4 albedo_tex = sample_material_texture(mat.albedo_texture_idx, uv, mat.flags);
 	vec3 albedo = albedo_tex.rgb * mat.albedo_color.rgb;
-	vec3 orm = sample_material_texture(mat.orm_texture_idx, uv, mat.flags).rgb;
-	float roughness = saturate(orm.g * mat.roughness);
-	float metalness = saturate(orm.b * mat.metallic);
+	float roughness = saturate(mat.roughness);
+	float metalness = saturate(mat.metallic);
+	if (rt_full_detail) {
+		vec3 orm = sample_material_texture(mat.orm_texture_idx, uv, mat.flags).rgb;
+		roughness = saturate(orm.g * mat.roughness);
+		metalness = saturate(orm.b * mat.metallic);
+	}
 
 	vec3 emissive = vec3(0.0);
 	if ((mat.flags & 2u) != 0u) {
