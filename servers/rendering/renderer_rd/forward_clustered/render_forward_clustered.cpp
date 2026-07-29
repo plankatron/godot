@@ -2537,8 +2537,12 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		// than merely defensive -- but if this fires on a frame that SHOULD have
 		// geometry, the trace is being skipped and the real question is why the
 		// TLAS had no instances.
-		if (!rt_uniform_set.is_valid()) {
-			ERR_PRINT_ONCE("Raytracing: no TLAS uniform set for this frame - skipping the trace.");
+		// uniform_set_is_valid(), NOT is_valid(): the bind fails on an owner lookup
+		// (uniform_set_owner.get_or_null -> ERR_FAIL_NULL), so a stale RID that was
+		// freed or externally invalidated is still "valid" to is_valid() and gets
+		// bound anyway. That is the failure this guard exists to catch.
+		if (!RD::get_singleton()->uniform_set_is_valid(rt_uniform_set)) {
+			ERR_PRINT_ONCE("Raytracing: no usable TLAS uniform set for this frame - skipping the trace.");
 			RD::get_singleton()->draw_command_end_label();
 			return;
 		}
