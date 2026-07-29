@@ -2584,10 +2584,19 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			uint16_t material_counter = material_storage->material_get_rt_invalidation_counter(material_rid);
 			RTMaterialData *mat_data = process_material(material_rid, material_counter);
 
-			if (mat_data->rt_sbt_offset > 0 &&
-					!rt_shader_singleton->is_hg_ready_in_bundle(mat_data->rt_sbt_offset, p_rt_flags)) {
-				surf = surf->next;
-				continue;
+			// Custom hit groups compile on a worker thread, so a surface's HG is
+			// typically not ready for the first frames after a material appears.
+			// Dropping the surface from the TLAS meanwhile makes the geometry
+			// INVISIBLE until the compile lands (seconds, for a large shader with
+			// several pipeline variants). Fall back to the default hit group
+			// instead: the surface renders immediately with standard material
+			// shading and upgrades to its own shader once that is ready.
+			//
+			// A permanently-failed HG (HGState::Failed) never becomes ready, so
+			// this also keeps such geometry visible rather than silently absent.
+			uint32_t sbt_offset = mat_data->rt_sbt_offset;
+			if (sbt_offset > 0 && !rt_shader_singleton->is_hg_ready_in_bundle(sbt_offset, p_rt_flags)) {
+				sbt_offset = 0;
 			}
 
 			// Compute or reuse cached final transform (instance * aabb_transform for compressed meshes).
@@ -2635,7 +2644,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			}
 #endif
 
-			sbt_offsets.push_back(mat_data->rt_sbt_offset);
+			sbt_offsets.push_back(sbt_offset);
 			material_data.push_back(mat_data->data);
 
 			// Determine per-instance TLAS flags from material properties.
@@ -2657,10 +2666,12 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				inst_flags |= RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FLIP_FACING_BIT;
 			}
 
-			if (mat_data->rt_sbt_offset > 0) {
+			// Uses the possibly-fallen-back offset: a surface shading through the
+			// default hit group must take the standard-material branch below.
+			if (sbt_offset > 0) {
 				// Custom shader: enable any-hit if it uses alpha clip or has a hint_albedo texture.
 				const SceneShaderRaytracing::CustomShaderEntry *cse =
-						rt_shader_singleton->get_custom_shader_entry(mat_data->rt_sbt_offset);
+						rt_shader_singleton->get_custom_shader_entry(sbt_offset);
 				if (!cse || (!cse->uses_alpha_clip && cse->alpha_texture_buffer_offset == UINT32_MAX)) {
 					inst_flags |= RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT;
 				}
