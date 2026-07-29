@@ -143,6 +143,19 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["TANGENT"] = ShaderLanguage::TYPE_VEC3;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["BINORMAL"] = ShaderLanguage::TYPE_VEC3;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["VIEW"] = constt(ShaderLanguage::TYPE_VEC3);
+	// Ray-tracing-only built-ins. They must be declared HERE as well as renamed in
+	// SceneShaderRaytracing: renames only translate a name during code generation,
+	// while ShaderLanguage rejects any identifier missing from this table before
+	// codegen is ever reached ("Unknown identifier in expression").
+	//
+	// Declared on the shared spatial table, so the rasterizer will also PARSE them
+	// -- but it has no rename for them, so a shader must keep its uses inside
+	// #ifdef RT or raster codegen emits an undefined name. Under #ifdef RT the
+	// rasterizer never sees them at all.
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["PRIMARY_HIT"] = constt(ShaderLanguage::TYPE_BOOL);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["BOUNCE_INDEX"] = constt(ShaderLanguage::TYPE_UINT);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT_X"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT_Y"] = constt(ShaderLanguage::TYPE_VEC3);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["NORMAL_MAP"] = ShaderLanguage::TYPE_VEC3;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["NORMAL_MAP_DEPTH"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["BENT_NORMAL_MAP"] = ShaderLanguage::TYPE_VEC3;
