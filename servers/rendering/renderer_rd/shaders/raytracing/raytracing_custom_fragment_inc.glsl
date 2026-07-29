@@ -62,6 +62,32 @@ rt_front_facing = rt_front_face;
 rt_screen_uv = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy);
 rt_frag_coord = vec4(gl_LaunchIDEXT.xy, 0.0, 1.0);
 
+// Per-pixel world-space footprint at the hit (ray differentials). The camera's
+// right/up axes, scaled by the world size of one pixel at this distance, then
+// slid along the ray onto the surface plane so grazing angles stretch the
+// footprint the way real derivatives would.
+//
+// projection_matrix[1][1] is 1/tan(fovy/2), so 2*t/(that * viewport_height) is the
+// world height of a pixel at distance t. On secondary bounces gl_HitTEXT is that
+// bounce's length rather than a camera distance, which makes this an
+// approximation there -- still far better than the zero derivative it replaces.
+{
+	float rt_t = gl_HitTEXT;
+	vec3 rt_dir = gl_WorldRayDirectionEXT;
+	float rt_px = 2.0 * rt_t / max(projection_matrix[1][1] * read_viewport_size.y, 1e-6);
+	vec3 rt_fx = inv_view_matrix[0].xyz * rt_px;
+	vec3 rt_fy = inv_view_matrix[1].xyz * rt_px;
+	vec3 rt_n = normalize(rt_normal);
+	float rt_ndotd = dot(rt_n, rt_dir);
+	if (abs(rt_ndotd) > 1e-4) {
+		rt_footprint_x = rt_fx - rt_dir * (dot(rt_fx, rt_n) / rt_ndotd);
+		rt_footprint_y = rt_fy - rt_dir * (dot(rt_fy, rt_n) / rt_ndotd);
+	} else {
+		rt_footprint_x = rt_fx;
+		rt_footprint_y = rt_fy;
+	}
+}
+
 // Run vertex shader (computes varyings, may modify built-ins).
 /* RT_CUSTOM_VERTEX_CALL */
 
