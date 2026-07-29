@@ -30,6 +30,18 @@ vec4 color_interp = vec4(1.0);
 uint rt_bounce_index = 0u;
 bool rt_primary_hit = true;
 
+// World-space size of one pixel's footprint at this hit, along screen X and Y,
+// projected onto the surface. This is the ray-differential replacement for
+// dFdx/dFdy(WORLD_POSITION) -- which cannot exist in a hit shader, there being no
+// 2x2 quad -- and it is what a textureGrad needs to pick a sane mip.
+//
+// Exposed to GDShader as RAY_FOOTPRINT_X / RAY_FOOTPRINT_Y. Deliberately NOT
+// wired into dFdx() itself: dFdx of a world position is exactly this, but dFdx of
+// anything else is not, and silently returning a position footprint for an
+// arbitrary expression would be wrong in a way nothing would catch.
+vec3 rt_footprint_x = vec3(0.0);
+vec3 rt_footprint_y = vec3(0.0);
+
 vec4 custom0_attrib = vec4(0.0);
 vec4 custom1_attrib = vec4(0.0);
 vec4 custom2_attrib = vec4(0.0);

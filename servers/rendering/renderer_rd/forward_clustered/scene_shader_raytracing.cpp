@@ -1573,6 +1573,11 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		// behind the RT define.
 		actions.renames["BOUNCE_INDEX"] = "rt_bounce_index";
 		actions.renames["PRIMARY_HIT"] = "rt_primary_hit";
+		// Ray-differential stand-in for dFdx/dFdy(WORLD_POSITION), which cannot
+		// exist in a hit shader. Feed these to textureGrad instead of taking
+		// derivatives, or the sampler falls back to LOD 0 and aliases.
+		actions.renames["RAY_FOOTPRINT_X"] = "rt_footprint_x";
+		actions.renames["RAY_FOOTPRINT_Y"] = "rt_footprint_y";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";
