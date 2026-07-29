@@ -2025,13 +2025,53 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, RT_L
 // Uniform set update
 // ---------------------------------------------------------------------------
 
+// All texture kinds share descriptor set 1, so it is rebuilt as a unit whenever
+// any table changed. Split out of update_uniform_set because that function can
+// now return early when the scene set is unchanged, and the bindless set still
+// has to be kept current on those frames.
+void RenderRaytracing::_update_bindless_uniform_set(RID p_shader_rd) {
+	bool bindless_dirty = !bindless_uniform_set.is_valid();
+	for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+		if (!bindless_blocks[k] || !bindless_blocks[k]->is_initialized()) {
+			return;
+		}
+		bindless_dirty = bindless_dirty || bindless_blocks[k]->needs_rebuild();
+	}
+
+	if (!bindless_dirty) {
+		return;
+	}
+
+	Vector<RD::Uniform> bindless_uniforms;
+	for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+		bindless_blocks[k]->collect_uniform(bindless_uniforms);
+	}
+
+	if (bindless_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(bindless_uniform_set)) {
+		RD::get_singleton()->free_rid(bindless_uniform_set);
+	}
+	bindless_uniform_set = RD::get_singleton()->uniform_set_create(bindless_uniforms, p_shader_rd, 1);
+
+	if (bindless_uniform_set.is_valid()) {
+		RD::get_singleton()->set_resource_name(bindless_uniform_set, "Bindless Texture Set");
+		for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
+			bindless_blocks[k]->mark_rebuilt();
+		}
+	} else {
+		ERR_PRINT_ONCE("RT: failed to create the bindless texture uniform set.");
+	}
+}
+
 RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags) {
 	ERR_FAIL_NULL_V(p_state, RID());
 
-	if (p_state->uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->uniform_set)) {
-		RD::get_singleton()->free_rid(p_state->uniform_set);
-		p_state->uniform_set = RID();
-	}
+	// NOTE: the set is NOT freed here. It used to be destroyed and recreated every
+	// frame for every viewport -- ~30 bindings including the 12 material samplers
+	// -- which is pure per-frame driver work even when nothing about the scene
+	// changed. It is now rebuilt only when one of the bound RIDs differs (see the
+	// comparison against uniform_set_rids at the end of this function). Buffers
+	// updated in place, like params and lights, keep their RID and so do not
+	// require a new descriptor set.
 
 	// BindlessBlock handles its own uniform set cleanup via clear()
 
@@ -2320,6 +2360,42 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	RID shader_rd = shader ? shader->get_pipeline_shader_rd(p_rt_flags) : RID();
 
 	if (shader_rd.is_valid()) {
+		// Flatten the bound RIDs (plus the shader, since the set is created
+		// against it) and reuse the existing set when nothing has changed.
+		LocalVector<RID> rids;
+		rids.push_back(shader_rd);
+		for (const RD::Uniform &u : uniforms) {
+			for (uint32_t i = 0; i < u.get_id_count(); i++) {
+				rids.push_back(u.get_id(i));
+			}
+		}
+
+		bool unchanged = p_state->uniform_set.is_valid() &&
+				RD::get_singleton()->uniform_set_is_valid(p_state->uniform_set) &&
+				p_state->uniform_set_rids.size() == rids.size();
+		if (unchanged) {
+			for (uint32_t i = 0; i < rids.size(); i++) {
+				if (p_state->uniform_set_rids[i] != rids[i]) {
+					unchanged = false;
+					break;
+				}
+			}
+		}
+
+		if (unchanged) {
+			// Still bind the bindless set below, then hand back the cached set.
+			if (bindless_blocks[0] && bindless_blocks[0]->is_initialized()) {
+				_update_bindless_uniform_set(shader_rd);
+			}
+			return p_state->uniform_set;
+		}
+
+		if (p_state->uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->uniform_set)) {
+			RD::get_singleton()->free_rid(p_state->uniform_set);
+		}
+		p_state->uniform_set = RID();
+		p_state->uniform_set_rids = rids;
+
 		p_state->uniform_set = RD::get_singleton()->uniform_set_create(
 				uniforms,
 				shader_rd,
@@ -2327,38 +2403,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		RD::get_singleton()->set_resource_name(p_state->uniform_set, "RT Uniform Set");
 
 		// === SET 1: Bindless textures ===
-		// All texture kinds share set 1, so the set is rebuilt as a unit whenever
-		// any table changed.
-		bool bindless_ready = true;
-		bool bindless_dirty = !bindless_uniform_set.is_valid();
-		for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
-			if (!bindless_blocks[k] || !bindless_blocks[k]->is_initialized()) {
-				bindless_ready = false;
-				break;
-			}
-			bindless_dirty = bindless_dirty || bindless_blocks[k]->needs_rebuild();
-		}
-
-		if (bindless_ready && bindless_dirty) {
-			Vector<RD::Uniform> bindless_uniforms;
-			for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
-				bindless_blocks[k]->collect_uniform(bindless_uniforms);
-			}
-
-			if (bindless_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(bindless_uniform_set)) {
-				RD::get_singleton()->free_rid(bindless_uniform_set);
-			}
-			bindless_uniform_set = RD::get_singleton()->uniform_set_create(bindless_uniforms, shader_rd, 1);
-
-			if (bindless_uniform_set.is_valid()) {
-				RD::get_singleton()->set_resource_name(bindless_uniform_set, "Bindless Texture Set");
-				for (uint32_t k = 0; k < BindlessBlock::TEXTURE_KIND_MAX; k++) {
-					bindless_blocks[k]->mark_rebuilt();
-				}
-			} else {
-				ERR_PRINT_ONCE("RT: failed to create the bindless texture uniform set.");
-			}
-		}
+		_update_bindless_uniform_set(shader_rd);
 	}
 
 	return p_state->uniform_set;

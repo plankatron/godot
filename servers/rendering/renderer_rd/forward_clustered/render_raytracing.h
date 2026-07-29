@@ -268,6 +268,10 @@ struct RTViewportState {
 	RID params_buffer;
 
 	RID uniform_set;
+	// RIDs the live uniform_set was built from. The set is only rebuilt when one
+	// of them actually changes; buffers whose CONTENTS change (params, lights)
+	// keep the same RID and so need no new descriptor set.
+	LocalVector<RID> uniform_set_rids;
 
 	uint32_t frame_counter = 0;
 };
@@ -384,6 +388,7 @@ public:
 
 	void cleanup_caches();
 
+	void _update_bindless_uniform_set(RID p_shader_rd);
 	RTViewportState *build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags);
 	uint32_t gather_lights(const RenderDataRD *p_render_data, RT_LightData *r_light_data, uint32_t p_max_lights);
 	RID update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags);
