@@ -39,6 +39,27 @@ vec4 rt_frag_coord = vec4(0.0);
 float alpha_antialiasing_edge = 0.0;
 vec2 alpha_texture_coordinate = vec2(0.0);
 
+// Screen-space derivatives do not exist in ray tracing: a hit shader has no 2x2
+// pixel quad, so dFdx/dFdy/fwidth have no closest-hit overload and glslang
+// rejects any shader calling them -- failing the whole hit group, which
+// build_tlas then skips, leaving the geometry invisible but still collidable.
+//
+// These are macros rather than functions because redefining a built-in with an
+// existing signature is not legal GLSL, and macros stay type-generic.
+//
+// LIMITATION: the derivative is zero, so textureGrad/textureQueryLod select
+// LOD 0 and screen-footprint mip selection is lost under RT (expect aliasing on
+// minified detail). Doing this properly needs ray differentials or ray cones,
+// which require the hit triangle's attribute gradients and so cannot be
+// expressed as a macro over an arbitrary expression.
+#define dFdx(m_v) ((m_v) * 0.0)
+#define dFdy(m_v) ((m_v) * 0.0)
+#define dFdxCoarse(m_v) ((m_v) * 0.0)
+#define dFdyCoarse(m_v) ((m_v) * 0.0)
+#define dFdxFine(m_v) ((m_v) * 0.0)
+#define dFdyFine(m_v) ((m_v) * 0.0)
+#define fwidth(m_v) ((m_v) * 0.0)
+
 // Screen/depth textures are unavailable in RT -- alias to bindless slot 0
 // so shaders that reference them still compile (reads return dummy values).
 #define depth_buffer bindless_textures[0]
