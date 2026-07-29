@@ -37,6 +37,7 @@
 #include "core/templates/vector.h"
 #include "servers/rendering/renderer_rd/bindless_block.h"
 #include "servers/rendering/rendering_device.h"
+#include "servers/rendering/shader_language.h"
 
 #define RB_TEX_RAYTRACING SNAME("raytracing")
 #define RB_TEX_RT_DEPTH SNAME("rt_depth")
@@ -271,9 +272,18 @@ class RenderRaytracing {
 	RenderForwardClustered *owner = nullptr;
 
 	SceneShaderRaytracing *shader = nullptr;
-	BindlessBlock *bindless_block = nullptr;
+
+	// One bindless table per texture type, all sharing descriptor set 1.
+	BindlessBlock *bindless_blocks[BindlessBlock::TEXTURE_KIND_MAX] = {};
 
 	RID bindless_uniform_set;
+
+	// Routes a shader uniform's sampler type to the table that can serve it.
+	static BindlessBlock::TextureKind _texture_kind_for_type(ShaderLanguage::DataType p_type);
+
+	_FORCE_INLINE_ BindlessBlock *_bindless(BindlessBlock::TextureKind p_kind) const {
+		return bindless_blocks[p_kind];
+	}
 
 	// Caching (chunked sparse caches indexed by RID low bits / 256).
 	Vector<RTCacheEntry *> surface_chunks;

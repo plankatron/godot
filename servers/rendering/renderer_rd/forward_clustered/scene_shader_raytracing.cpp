@@ -42,7 +42,13 @@
 
 using namespace RendererSceneRenderImplementation;
 
-static void _dump_failed_shader(const String &p_source, const String &p_label) {
+static void _dump_failed_shader(const String &p_source, const String &p_label, const String &p_error) {
+	// The compiler error is the only thing that identifies WHY the hit group failed;
+	// without it a failed hit group is indistinguishable from one that was never
+	// registered, and the level silently renders nothing.
+	if (!p_error.is_empty()) {
+		ERR_PRINT("RT shader compile failed (" + p_label + "): " + p_error);
+	}
 	String tmp_dir = OS::get_singleton()->get_temp_path();
 	String path = tmp_dir.path_join("rt_shader_" + p_label + ".glsl");
 	Ref<FileAccess> f = FileAccess::open(path, FileAccess::WRITE);
@@ -413,6 +419,26 @@ struct SceneShaderRaytracing::PipelineBuildTask {
 	WorkerThreadPool::TaskID worker_id = WorkerThreadPool::INVALID_TASK_ID;
 };
 
+const char *SceneShaderRaytracing::_bindless_table_name(ShaderLanguage::DataType p_type) {
+	// Names must match the declarations in scene_raytracing_raygen.glsl.
+	switch (p_type) {
+		case ShaderLanguage::TYPE_SAMPLER2DARRAY:
+		case ShaderLanguage::TYPE_ISAMPLER2DARRAY:
+		case ShaderLanguage::TYPE_USAMPLER2DARRAY:
+			return "bindless_textures_2d_array";
+		case ShaderLanguage::TYPE_SAMPLER3D:
+		case ShaderLanguage::TYPE_ISAMPLER3D:
+		case ShaderLanguage::TYPE_USAMPLER3D:
+			return "bindless_textures_3d";
+		case ShaderLanguage::TYPE_SAMPLERCUBE:
+			return "bindless_textures_cube";
+		case ShaderLanguage::TYPE_SAMPLERCUBEARRAY:
+			return "bindless_textures_cube_array";
+		default:
+			return "bindless_textures";
+	}
+}
+
 void SceneShaderRaytracing::_strip_texture_globals(String &r_globals, const String &p_tex_name) {
 	const String decl_marker = " m_" + p_tex_name + ";";
 	int pos = r_globals.find(decl_marker);
@@ -469,6 +495,7 @@ void SceneShaderRaytracing::_finalize_uniforms_with_textures(
 
 		TextureUniformInfo tui;
 		tui.name = tex.name;
+		tui.type = tex.type;
 		tui.hint = tex.hint;
 		tui.use_color = tex.use_color;
 		tui.is_global = tex.global;
@@ -957,7 +984,12 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		String tex_defines;
 		for (int ti = 0; ti < entry.texture_uniforms.size(); ti++) {
 			const TextureUniformInfo &tui = entry.texture_uniforms[ti];
-			tex_defines += "#define m_" + tui.name + " bindless_textures[nonuniformEXT(material.m_" + tui.name + ")]\n";
+			// Must name the table whose element type matches the uniform's sampler
+			// type. Pointing everything at bindless_textures (texture2D) makes a
+			// sampler2DArray uniform generate sampler2DArray(texture2D, ...), which
+			// glslang rejects -- taking the whole hit group down with it.
+			tex_defines += "#define m_" + tui.name + " " + _bindless_table_name(tui.type) +
+					"[nonuniformEXT(material.m_" + tui.name + ")]\n";
 		}
 		String uniform_members = entry.uniform_members.is_empty() ? String("float _rt_pad;") : entry.uniform_members;
 
@@ -1090,11 +1122,12 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 		Vector<uint8_t> ch_spirv;
 		{
 			MutexLock lock(spirv_compile_mutex);
+			error = String();
 			ch_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
 					RD::SHADER_STAGE_CLOSEST_HIT, si.ch_src, RD::SHADER_LANGUAGE_GLSL, &error);
 		}
 		if (ch_spirv.is_empty()) {
-			_dump_failed_shader(si.ch_src, vformat("hg%d_v%x_closest_hit", i, p_task->rt_flags));
+			_dump_failed_shader(si.ch_src, vformat("hg%d_v%x_closest_hit", i, p_task->rt_flags), error);
 			p_task->new_per_hg_shaders[i] = RID();
 			p_task->new_ready_mask[i] = false;
 			continue;
@@ -1110,11 +1143,12 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 			Vector<uint8_t> ah_spirv;
 			{
 				MutexLock lock(spirv_compile_mutex);
+				error = String();
 				ah_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
 						RD::SHADER_STAGE_ANY_HIT, si.ah_src, RD::SHADER_LANGUAGE_GLSL, &error);
 			}
 			if (ah_spirv.is_empty()) {
-				_dump_failed_shader(si.ah_src, vformat("hg%d_v%x_any_hit", i, p_task->rt_flags));
+				_dump_failed_shader(si.ah_src, vformat("hg%d_v%x_any_hit", i, p_task->rt_flags), error);
 				p_task->new_per_hg_shaders[i] = RID();
 				p_task->new_ready_mask[i] = false;
 				continue;
@@ -1131,11 +1165,12 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 			Vector<uint8_t> is_spirv;
 			{
 				MutexLock lock(spirv_compile_mutex);
+				error = String();
 				is_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
 						RD::SHADER_STAGE_INTERSECTION, si.is_src, RD::SHADER_LANGUAGE_GLSL, &error);
 			}
 			if (is_spirv.is_empty()) {
-				_dump_failed_shader(si.is_src, vformat("hg%d_v%x_intersection", i, p_task->rt_flags));
+				_dump_failed_shader(si.is_src, vformat("hg%d_v%x_intersection", i, p_task->rt_flags), error);
 				p_task->new_per_hg_shaders[i] = RID();
 				p_task->new_ready_mask[i] = false;
 				continue;
