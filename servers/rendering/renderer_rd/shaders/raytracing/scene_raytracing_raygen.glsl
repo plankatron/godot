@@ -384,14 +384,23 @@ void main() {
 	// live state cost register pressure (and so occupancy) on every hit shader,
 	// including the ones that never touch CUSTOM. fetch_custom early-outs on
 	// surfaces without the array, so this is cheap when unused.
+	// Skip the whole block -- including re-deriving the triangle indices -- when
+	// the surface carries no CUSTOM arrays at all, which is the common case.
 	GeometryData rt_cgeom = geometries[h.geometry_idx];
-	uint rt_ci0, rt_ci1, rt_ci2;
-	get_triangle_indices(rt_cgeom, rt_ci0, rt_ci1, rt_ci2);
-	vec3 rt_cbary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
-	vec4 rt_custom0 = fetch_custom(rt_cgeom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	vec4 rt_custom1 = fetch_custom(rt_cgeom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	vec4 rt_custom2 = fetch_custom(rt_cgeom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	vec4 rt_custom3 = fetch_custom(rt_cgeom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	vec4 rt_custom0 = vec4(0.0);
+	vec4 rt_custom1 = vec4(0.0);
+	vec4 rt_custom2 = vec4(0.0);
+	vec4 rt_custom3 = vec4(0.0);
+	if (rt_cgeom.custom_packed[0] != OFFSET_NONE || rt_cgeom.custom_packed[1] != OFFSET_NONE ||
+			rt_cgeom.custom_packed[2] != OFFSET_NONE || rt_cgeom.custom_packed[3] != OFFSET_NONE) {
+		uint rt_ci0, rt_ci1, rt_ci2;
+		get_triangle_indices(rt_cgeom, rt_ci0, rt_ci1, rt_ci2);
+		vec3 rt_cbary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+		rt_custom0 = fetch_custom(rt_cgeom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+		rt_custom1 = fetch_custom(rt_cgeom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+		rt_custom2 = fetch_custom(rt_cgeom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+		rt_custom3 = fetch_custom(rt_cgeom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	}
 	vec3 rt_normal = h.geometry_normal;
 	vec3 rt_tangent = h.tangent;
 	vec3 rt_bitangent = h.bitangent;
