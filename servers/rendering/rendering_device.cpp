@@ -33,6 +33,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/error/error_backtrace.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/object/class_db.h"
@@ -7862,11 +7863,36 @@ void RenderingDevice::_free_internal(RID p_id) {
 		frames[frame].buffers_to_dispose_of.push_back(*hit_sbt);
 		hit_sbt_owner.free(p_id);
 	} else {
+		static int trace_count = 0;
+		String trace_suffix;
+		if (trace_count < 20) {
+			trace_count++;
+			trace_suffix = "\n" + backtrace_dump() + "   [trace " + itos(trace_count) + "/20]";
+		}
+
+		// This fires per double-freed RID, and something upstream can produce
+		// hundreds per frame. ERR_PRINT is not cheap -- string building plus
+		// synchronous stderr -- so unbounded spam becomes a framerate problem in
+		// its own right, on top of whatever bug is causing the frees. Print the
+		// first PRINT_LIMIT in full (the backtraces are the diagnostic), then
+		// report a running total periodically instead of every occurrence.
+		constexpr int PRINT_LIMIT = 64;
+		static int invalid_free_count = 0;
+		invalid_free_count++;
+
+		if (invalid_free_count <= PRINT_LIMIT) {
 #ifdef DEV_ENABLED
-		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name);
+			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + " " + resource_name + trace_suffix);
 #else
-		ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()));
+			ERR_PRINT("Attempted to free invalid ID: " + itos(p_id.get_id()) + trace_suffix);
 #endif
+			if (invalid_free_count == PRINT_LIMIT) {
+				ERR_PRINT("Attempted to free invalid ID: reached " + itos(PRINT_LIMIT) +
+						" reports; further occurrences are counted, not printed.");
+			}
+		} else if ((invalid_free_count % 1000) == 0) {
+			ERR_PRINT("Attempted to free invalid ID: " + itos(invalid_free_count) + " total occurrences so far.");
+		}
 	}
 
 	frames_pending_resources_for_processing = uint32_t(frames.size());
