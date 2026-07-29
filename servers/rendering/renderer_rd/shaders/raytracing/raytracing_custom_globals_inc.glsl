@@ -21,6 +21,15 @@ vec4 color_interp = vec4(1.0);
 // SceneShaderRaytracing), so they must exist even when the surface has no such
 // array -- otherwise any shader touching CUSTOM0 fails to compile and takes its
 // whole hit group down.
+// Path depth of the hit being shaded. 0 is the camera-visible hit; anything
+// higher is an indirect bounce contributing through the throughput, where a
+// cheaper material is usually indistinguishable. Shaders can use these to skip
+// detail work on secondary bounces -- in a path tracer the material is evaluated
+// once per bounce per sample, so that scales with pt_bounces.
+// Exposed to GDShader as BOUNCE_INDEX and PRIMARY_HIT.
+uint rt_bounce_index = 0u;
+bool rt_primary_hit = true;
+
 vec4 custom0_attrib = vec4(0.0);
 vec4 custom1_attrib = vec4(0.0);
 vec4 custom2_attrib = vec4(0.0);
