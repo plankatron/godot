@@ -20,7 +20,6 @@ struct HitData {
 	vec3 bitangent; // World space.
 	vec2 uv; // Raw UV (no material scale/offset applied).
 	vec4 color; // Vertex color (white if not present).
-	vec4 custom[4]; // CUSTOM0-3 (zero if not present); only filled for custom HGs.
 	bool is_front_face;
 	uint geometry_idx;
 };
@@ -41,7 +40,6 @@ HitData compute_hit_data() {
 #endif
 	h.uv = attrs.uv;
 	h.color = attrs.color;
-	h.custom = attrs.custom;
 
 	mat3 model_rotation = mat3(gl_ObjectToWorldEXT);
 	mat3 normal_matrix = mat3(
