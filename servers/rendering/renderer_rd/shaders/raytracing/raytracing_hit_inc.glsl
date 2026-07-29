@@ -12,6 +12,7 @@ struct VertexAttributes {
 	vec3 tangent;
 	float bitangent_sign;
 	vec4 color;
+	vec4 custom[4]; // CUSTOM0-3; vec4(0) when the surface has no such array.
 	bool has_uv;
 	bool has_normal;
 	bool has_tangent;
@@ -131,6 +132,59 @@ vec4 fetch_color(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 }
 
 // ============================================================================
+// CUSTOM0-3 FETCHING
+// ============================================================================
+// Decodes one vertex's ARRAY_CUSTOM_* value to vec4. Formats and their sizes
+// match the fmtsize table in RenderRaytracing::process_surface.
+vec4 decode_custom_vertex(in GeometryData geom, uint fmt, uint word_base) {
+	Uint32Buffer attr = Uint32Buffer(geom.attribute_address);
+	FloatBuffer attr_f = FloatBuffer(geom.attribute_address);
+
+	switch (fmt) {
+		case 0u: // RGBA8_UNORM
+			return unpackUnorm4x8(attr.v[word_base]);
+		case 1u: // RGBA8_SNORM
+			return unpackSnorm4x8(attr.v[word_base]);
+		case 2u: // RG_HALF
+			return vec4(unpackHalf2x16(attr.v[word_base]), 0.0, 0.0);
+		case 3u: // RGBA_HALF
+			return vec4(unpackHalf2x16(attr.v[word_base]), unpackHalf2x16(attr.v[word_base + 1u]));
+		case 4u: // R_FLOAT
+			return vec4(attr_f.v[word_base], 0.0, 0.0, 0.0);
+		case 5u: // RG_FLOAT
+			return vec4(attr_f.v[word_base], attr_f.v[word_base + 1u], 0.0, 0.0);
+		case 6u: // RGB_FLOAT
+			return vec4(attr_f.v[word_base], attr_f.v[word_base + 1u], attr_f.v[word_base + 2u], 0.0);
+		default: // 7u RGBA_FLOAT
+			return vec4(attr_f.v[word_base], attr_f.v[word_base + 1u],
+					attr_f.v[word_base + 2u], attr_f.v[word_base + 3u]);
+	}
+}
+
+// Barycentric, matching fetch_uv/fetch_color. A shader may declare its
+// CUSTOM-derived varying `flat` (per-face data), but there is no rasterizer
+// interpolation in the RT path -- the hit shader runs once at the hit point --
+// and per-face data stored on a face's own vertices interpolates back to that
+// same constant.
+vec4 fetch_custom(in GeometryData geom, uint custom_index, uint i0, uint i1, uint i2, vec3 bary) {
+	uint packed = geom.custom_packed[custom_index];
+	if (packed == OFFSET_NONE || geom.attribute_address == 0ul) {
+		return vec4(0.0);
+	}
+
+	uint byte_off = packed & 0x00FFFFFFu;
+	uint fmt = packed >> 24;
+	uint stride_words = geom.attribute_stride >> 2;
+	uint word_off = byte_off >> 2;
+
+	vec4 c0 = decode_custom_vertex(geom, fmt, i0 * stride_words + word_off);
+	vec4 c1 = decode_custom_vertex(geom, fmt, i1 * stride_words + word_off);
+	vec4 c2 = decode_custom_vertex(geom, fmt, i2 * stride_words + word_off);
+
+	return bary.x * c0 + bary.y * c1 + bary.z * c2;
+}
+
+// ============================================================================
 // TBN FETCHING
 // ============================================================================
 void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binormal, out vec3 normal) {
@@ -231,7 +285,8 @@ TBNResult fetch_tbn(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) 
 #define FETCH_UV (1u << 0)
 #define FETCH_TBN (1u << 1)
 #define FETCH_COLOR (1u << 2)
-#define FETCH_ALL (FETCH_UV | FETCH_TBN | FETCH_COLOR)
+#define FETCH_CUSTOM (1u << 3)
+#define FETCH_ALL (FETCH_UV | FETCH_TBN | FETCH_COLOR | FETCH_CUSTOM)
 
 #ifdef RT_HIT_ATTRIBS_DECLARED
 VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs, uint fetch_flags) {
@@ -241,6 +296,10 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 	attrs.tangent = vec3(1.0, 0.0, 0.0);
 	attrs.bitangent_sign = 1.0;
 	attrs.color = vec4(1.0);
+	attrs.custom[0] = vec4(0.0);
+	attrs.custom[1] = vec4(0.0);
+	attrs.custom[2] = vec4(0.0);
+	attrs.custom[3] = vec4(0.0);
 	attrs.has_uv = false;
 	attrs.has_normal = false;
 	attrs.has_tangent = false;
@@ -259,6 +318,15 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 	if ((fetch_flags & FETCH_COLOR) != 0u && geom.color_byte_offset != OFFSET_NONE) {
 		attrs.color = fetch_color(geom, i0, i1, i2, bary);
 		attrs.has_color = true;
+	}
+
+	// fetch_custom early-outs per index, so a surface with no custom arrays pays
+	// four compares rather than four buffer reads.
+	if ((fetch_flags & FETCH_CUSTOM) != 0u) {
+		attrs.custom[0] = fetch_custom(geom, 0u, i0, i1, i2, bary);
+		attrs.custom[1] = fetch_custom(geom, 1u, i0, i1, i2, bary);
+		attrs.custom[2] = fetch_custom(geom, 2u, i0, i1, i2, bary);
+		attrs.custom[3] = fetch_custom(geom, 3u, i0, i1, i2, bary);
 	}
 
 	if ((fetch_flags & FETCH_TBN) != 0u && geom.normal_byte_offset != OFFSET_NONE) {

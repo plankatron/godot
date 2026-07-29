@@ -327,6 +327,10 @@ void main() {
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;
 	vec4 rt_color = h.color;
+	vec4 rt_custom0 = h.custom[0];
+	vec4 rt_custom1 = h.custom[1];
+	vec4 rt_custom2 = h.custom[2];
+	vec4 rt_custom3 = h.custom[3];
 	vec3 rt_normal = h.geometry_normal;
 	vec3 rt_tangent = h.tangent;
 	vec3 rt_bitangent = h.bitangent;
@@ -525,6 +529,10 @@ void main() {
 
 	vec3 rt_hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 	vec4 rt_color = fetch_color(geom, i0, i1, i2, bary);
+	vec4 rt_custom0 = fetch_custom(geom, 0u, i0, i1, i2, bary);
+	vec4 rt_custom1 = fetch_custom(geom, 1u, i0, i1, i2, bary);
+	vec4 rt_custom2 = fetch_custom(geom, 2u, i0, i1, i2, bary);
+	vec4 rt_custom3 = fetch_custom(geom, 3u, i0, i1, i2, bary);
 
 #include "raytracing_custom_fragment_inc.glsl"
 

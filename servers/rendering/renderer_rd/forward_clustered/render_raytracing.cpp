@@ -726,9 +726,14 @@ void RenderRaytracing::_populate_surface_blas(
 	}
 	for (int ci = 0; ci < RSE::ARRAY_CUSTOM_COUNT; ci++) {
 		const uint32_t fmt_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
+		geom.custom_packed[ci] = RT_OFFSET_NONE;
 		if (surface_format & (1ULL << (RSE::ARRAY_CUSTOM0 + ci))) {
 			uint32_t fmt = (surface_format >> fmt_shift[ci]) & RSE::ARRAY_FORMAT_CUSTOM_MASK;
 			const uint32_t fmtsize[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
+			// The offset was already being walked to size the stride; record it so
+			// hit shaders can actually read CUSTOM0-3 (shaders referencing them
+			// previously failed to compile on 'custom0_attrib' undeclared).
+			geom.custom_packed[ci] = (attrib_offset & 0x00FFFFFFu) | (fmt << 24);
 			attrib_offset += fmtsize[fmt];
 		}
 	}
