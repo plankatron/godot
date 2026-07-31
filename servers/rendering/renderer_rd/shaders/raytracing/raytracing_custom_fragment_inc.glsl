@@ -74,7 +74,14 @@ rt_frag_coord = vec4(gl_LaunchIDEXT.xy, 0.0, 1.0);
 {
 	float rt_t = gl_HitTEXT;
 	vec3 rt_dir = gl_WorldRayDirectionEXT;
-	float rt_px = 2.0 * rt_t / max(projection_matrix[1][1] * read_viewport_size.y, 1e-6);
+	// abs(): projection_matrix[1][1] is NEGATIVE under Vulkan's Y-flip. update_ubo
+	// builds projection = correction * cam_projection, and Projection::set_depth_correction
+	// sets columns[1][1] = flip_y ? -1 : 1 (projection.cpp:796), so this term is about
+	// -1/tan(fovy/2). Without abs() the product goes negative, max(negative, 1e-6)
+	// returns the epsilon, and the footprint inflates by ~1e6 -- every textureGrad in a
+	// custom hit group then takes the coarsest mip. MEASURED on map_dc_level: median LOD
+	// 6.000 (clamp ceiling) against the rasterizer's ground-truth 0.494.
+	float rt_px = 2.0 * rt_t / max(abs(projection_matrix[1][1]) * read_viewport_size.y, 1e-6);
 	vec3 rt_fx = inv_view_matrix[0].xyz * rt_px;
 	vec3 rt_fy = inv_view_matrix[1].xyz * rt_px;
 	vec3 rt_n = normalize(rt_normal);
