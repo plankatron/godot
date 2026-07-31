@@ -254,6 +254,21 @@ uint64_t RenderRaytracing::mat_ubo_pool_get_address(uint32_t p_slot) const {
 // Cache management
 // ---------------------------------------------------------------------------
 
+// A cached BLAS can be reclaimed out from under us. blas_create registers the BLAS
+// as a dependency of the vertex/index buffers it was built from
+// (rendering_device.cpp:444), and _free_dependencies frees every dependent when the
+// buffer goes, so a streaming mesh dropping its buffers takes the BLAS with it. The
+// cache entry still holds the RID, and RID::is_valid() only tests for non-null -- it
+// cannot see that the RD already reclaimed the slot -- so the next refresh frees it a
+// second time. That is the "Attempted to free invalid ID ... was acceleration_structure"
+// storm: hundreds per frame under dc-terrain streaming (hyper-games #11 §7.3).
+static void rt_free_blas_if_owned(RID &r_blas) {
+	if (r_blas.is_valid() && RD::get_singleton()->acceleration_structure_is_valid(r_blas)) {
+		RD::get_singleton()->free_rid(r_blas);
+	}
+	r_blas = RID();
+}
+
 void RenderRaytracing::cleanup_caches() {
 	// Free all cached surface data. BLAS resources are NOT freed here because
 	// they are owned by the RD dependency chain.
@@ -274,9 +289,7 @@ void RenderRaytracing::cleanup_caches() {
 	for (KeyValue<uint64_t, RTDeformedCacheEntry> &kv : deformed_surface_cache) {
 		RTDeformedCacheEntry &e = kv.value;
 		if (e.ptr) {
-			if (e.ptr->blas.is_valid()) {
-				RD::get_singleton()->free_rid(e.ptr->blas);
-			}
+			rt_free_blas_if_owned(e.ptr->blas);
 			memdelete(e.ptr);
 			e.ptr = nullptr;
 		}
@@ -396,9 +409,7 @@ void RenderRaytracing::prepare_frame() {
 			RTDeformedCacheEntry &e = kv.value;
 			if (e.last_used_frame != 0 && current_frame - e.last_used_frame > DEFORMED_CACHE_TTL_FRAMES) {
 				if (e.ptr) {
-					if (e.ptr->blas.is_valid()) {
-						RD::get_singleton()->free_rid(e.ptr->blas);
-					}
+					rt_free_blas_if_owned(e.ptr->blas);
 					memdelete(e.ptr);
 					e.ptr = nullptr;
 				}
@@ -476,10 +487,9 @@ RTSurfaceData *RenderRaytracing::process_surface(
 	// Allocate or reuse entry
 	if (!entry->ptr) {
 		entry->ptr = memnew(RTSurfaceData);
-	} else if (entry->ptr->blas.is_valid()) {
-		// Free old BLAS before creating new one
-		RD::get_singleton()->free_rid(entry->ptr->blas);
-		entry->ptr->blas = RID();
+	} else {
+		// Free the old BLAS before creating a new one -- if the RD still has it.
+		rt_free_blas_if_owned(entry->ptr->blas);
 	}
 
 	RTSurfaceData *surf_data = entry->ptr;
@@ -567,9 +577,8 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 
 	if (!entry.ptr) {
 		entry.ptr = memnew(RTSurfaceData);
-	} else if (entry.ptr->blas.is_valid()) {
-		RD::get_singleton()->free_rid(entry.ptr->blas);
-		entry.ptr->blas = RID();
+	} else {
+		rt_free_blas_if_owned(entry.ptr->blas);
 		entry.blas_built_once = false;
 	}
 
@@ -1082,10 +1091,7 @@ void RenderRaytracing::update_procedural_blas(RTProceduralState *p_state, LocalV
 
 	// Grow-only: only recreate the buffer when capacity is exceeded or count changed.
 	if (required_bytes > p_state->gpu_buffer_capacity || aabb_count != p_state->aabb_count) {
-		if (p_state->blas.is_valid()) {
-			RD::get_singleton()->free_rid(p_state->blas);
-			p_state->blas = RID();
-		}
+		rt_free_blas_if_owned(p_state->blas);
 		if (p_state->gpu_buffer.is_valid()) {
 			RD::get_singleton()->free_rid(p_state->gpu_buffer);
 		}
