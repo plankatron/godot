@@ -468,8 +468,15 @@ void main() {
 	vec3 albedo = albedo_tex.rgb * mat.albedo_color.rgb;
 	float roughness = saturate(mat.roughness);
 	float metalness = saturate(mat.metallic);
+	// Declared outside the branch because debug_visualize() below reads it. Scoped
+	// inside, the RT_DEBUG_ENABLED variant failed to compile with "'orm': undeclared
+	// identifier", which took the whole base compile context down and left the
+	// renderer on a fallback path -- so every vis mode was broken on the default hit
+	// group. The default mirrors what the custom-hit-group branch builds for the same
+	// argument when there is no ORM texture to sample.
+	vec3 orm = vec3(1.0, roughness, metalness);
 	if (rt_full_detail) {
-		vec3 orm = sample_material_texture(mat.orm_texture_idx, uv, mat.flags).rgb;
+		orm = sample_material_texture(mat.orm_texture_idx, uv, mat.flags).rgb;
 		roughness = saturate(orm.g * mat.roughness);
 		metalness = saturate(orm.b * mat.metallic);
 	}
