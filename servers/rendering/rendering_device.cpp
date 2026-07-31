@@ -7733,6 +7733,46 @@ void RenderingDevice::_free_internal(RID p_id) {
 	// record which IDs were genuinely freed. That history is what lets a later
 	// invalid free be reported as a DOUBLE free rather than just "invalid".
 	bool dbg_was_invalid = false;
+
+	// Which owner held this ID, captured BEFORE the chain below frees it. Knowing
+	// a double-freed ID was an acceleration structure rather than a uniform set is
+	// the difference between one suspect cache and seventeen.
+	const char *dbg_owner_kind = nullptr;
+	if (texture_owner.owns(p_id)) {
+		dbg_owner_kind = "texture";
+	} else if (framebuffer_owner.owns(p_id)) {
+		dbg_owner_kind = "framebuffer";
+	} else if (sampler_owner.owns(p_id)) {
+		dbg_owner_kind = "sampler";
+	} else if (vertex_buffer_owner.owns(p_id)) {
+		dbg_owner_kind = "vertex_buffer";
+	} else if (vertex_array_owner.owns(p_id)) {
+		dbg_owner_kind = "vertex_array";
+	} else if (index_buffer_owner.owns(p_id)) {
+		dbg_owner_kind = "index_buffer";
+	} else if (index_array_owner.owns(p_id)) {
+		dbg_owner_kind = "index_array";
+	} else if (shader_owner.owns(p_id)) {
+		dbg_owner_kind = "shader";
+	} else if (uniform_buffer_owner.owns(p_id)) {
+		dbg_owner_kind = "uniform_buffer";
+	} else if (texture_buffer_owner.owns(p_id)) {
+		dbg_owner_kind = "texture_buffer";
+	} else if (storage_buffer_owner.owns(p_id)) {
+		dbg_owner_kind = "storage_buffer";
+	} else if (uniform_set_owner.owns(p_id)) {
+		dbg_owner_kind = "uniform_set";
+	} else if (render_pipeline_owner.owns(p_id)) {
+		dbg_owner_kind = "render_pipeline";
+	} else if (compute_pipeline_owner.owns(p_id)) {
+		dbg_owner_kind = "compute_pipeline";
+	} else if (acceleration_structure_owner.owns(p_id)) {
+		dbg_owner_kind = "acceleration_structure";
+	} else if (raytracing_pipeline_owner.owns(p_id)) {
+		dbg_owner_kind = "raytracing_pipeline";
+	} else if (hit_sbt_owner.owns(p_id)) {
+		dbg_owner_kind = "hit_sbt";
+	}
 #endif
 #ifdef DEV_ENABLED
 	String resource_name;
@@ -7894,14 +7934,23 @@ void RenderingDevice::_free_internal(RID p_id) {
 		//   "never valid"  -> it was never a live RID here: uninitialised or
 		//                     corrupted memory, or an ID from another RD instance.
 		//
-		// The RID is also decoded: RID_Alloc packs (index << 32) | validator, so a
-		// recurring index with a changing validator is slot reuse -- the signature
-		// of stale handles surviving a free/realloc cycle.
+		// The RID is also decoded. RID_Alloc packs (validator << 32) | index --
+		// see rid_owner.h:157-158 (`id = validator; id <<= 32;`) and :382
+		// (`_make_from_id((validator << 32) | i)`). The validator is a process-wide
+		// monotonic counter (`_gen_id()` -> `base_id.increment()`), so it reads as
+		// allocation birth-order; the index is the slot in this owner. A recurring
+		// index with a rising validator is slot reuse -- the signature of a stale
+		// handle surviving a free/realloc cycle.
 		String dbg_decoded;
 #ifdef DEBUG_ENABLED
-		String dbg_kind = _dbg_freed_ids.has(p_id.get_id()) ? "DOUBLE FREE (freed before)" : "never valid";
-		dbg_decoded = " [index=" + itos(p_id.get_id() >> 32) +
-				" validator=" + itos(p_id.get_id() & 0xFFFFFFFF) + " " + dbg_kind + "]";
+		String dbg_kind = "never valid";
+		if (_dbg_freed_ids.has(p_id.get_id())) {
+			dbg_kind = "DOUBLE FREE (freed before, was ";
+			dbg_kind += _dbg_freed_ids[p_id.get_id()];
+			dbg_kind += ")";
+		}
+		dbg_decoded = " [validator=" + itos(p_id.get_id() >> 32) +
+				" index=" + itos(p_id.get_id() & 0xFFFFFFFF) + " " + dbg_kind + "]";
 #endif
 
 		if (invalid_free_count <= PRINT_LIMIT) {
@@ -7921,7 +7970,7 @@ void RenderingDevice::_free_internal(RID p_id) {
 
 #ifdef DEBUG_ENABLED
 	if (!dbg_was_invalid) {
-		_dbg_freed_ids.insert(p_id.get_id());
+		_dbg_freed_ids.insert(p_id.get_id(), dbg_owner_kind ? dbg_owner_kind : "unknown");
 	}
 #endif
 
