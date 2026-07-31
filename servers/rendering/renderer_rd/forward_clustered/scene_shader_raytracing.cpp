@@ -1324,11 +1324,16 @@ void SceneShaderRaytracing::_finalize_pipeline_build(PipelineBuildTask *p_task) 
 	}
 	RD::get_singleton()->hit_sbt_range_update(new_sbt, sbt_range, 0, indices);
 
-	if (bundle.pipeline.is_valid()) {
-		RD::get_singleton()->free_rid(bundle.pipeline);
-	}
+	// SBT before pipeline, never the other way round: hit_sbt_create registers the
+	// SBT as a dependency of its pipeline (rendering_device.cpp:768), so freeing the
+	// pipeline first frees the SBT with it and the next free is a double free.
+	// Freeing the SBT first unregisters it from the pipeline's dependency set, which
+	// is what invalidate_pipeline_bundles() already does.
 	if (bundle.hit_sbt.is_valid()) {
 		RD::get_singleton()->free_rid(bundle.hit_sbt);
+	}
+	if (bundle.pipeline.is_valid()) {
+		RD::get_singleton()->free_rid(bundle.pipeline);
 	}
 	RD::get_singleton()->set_resource_name(p_task->new_pipeline, String("RT Pipeline [flags=") + itos(p_task->rt_flags) + "]");
 	bundle.pipeline = p_task->new_pipeline;
