@@ -47,6 +47,24 @@
 #include <cstring>
 #include <cwchar>
 
+// _fread_nolock is an MSVC CRT extension, and the buffered-read optimisation
+// below calls it directly. mingw-w64 DOES declare it, but only inside
+// `#if __MSVCRT_VERSION__ >= 0x800` (stdio.h) — and the default msvcrt target
+// does not set that, so cross-compiling with mingw fails to compile this file.
+// Defining __MSVCRT_VERSION__ ourselves would change which CRT this whole engine
+// assumes, to fix two call sites.
+//
+// fread is the portable equivalent. It takes the per-FILE* lock that the _nolock
+// variant exists to skip, so a mingw build pays that lock and an MSVC build does
+// not; the caching this serves is unaffected either way, and Godot's FileAccess
+// instances are not shared across threads concurrently (the reason the lock was
+// skippable in the first place).
+#if defined(_MSC_VER) || defined(_UCRT) || (defined(__MSVCRT_VERSION__) && __MSVCRT_VERSION__ >= 0x800)
+#define GODOT_FREAD_NOLOCK _fread_nolock
+#else
+#define GODOT_FREAD_NOLOCK fread
+#endif
+
 #ifdef _MSC_VER
 #define S_ISREG(m) ((m) & _S_IFREG)
 #endif
@@ -317,7 +335,7 @@ uint64_t FileAccessWindows::_fill_read_cache() const {
 
 	// _fread_nolock bypasses the per-call FILE* critical section. Safe here:
 	// Godot's FileAccess instances are not shared across threads concurrently.
-	size_t n = _fread_nolock(read_cache, 1, READ_CACHE_SIZE, f);
+	size_t n = GODOT_FREAD_NOLOCK(read_cache, 1, READ_CACHE_SIZE, f);
 	read_cache_filled = (uint32_t)n;
 	// Only a zero-byte read means the caller has hit logical EOF. A short
 	// non-zero fill is just readahead finding less than a full chunk left;
@@ -498,7 +516,7 @@ uint64_t FileAccessWindows::get_buffer(uint8_t *p_dst, uint64_t p_length) const 
 			read_cache_filled = 0;
 			read_cache_consumed = 0;
 
-			const size_t n = _fread_nolock(p_dst, 1, p_length, f);
+			const size_t n = GODOT_FREAD_NOLOCK(p_dst, 1, p_length, f);
 			read_cache_pos += n;
 			total_read += n;
 		} else {
