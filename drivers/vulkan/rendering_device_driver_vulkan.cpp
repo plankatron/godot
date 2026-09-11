@@ -1328,8 +1328,23 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	shader_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
 	create_info_next = &shader_features;
 
+	// VUID-VkDeviceCreateInfo-pNext-02830: if the pNext chain includes a
+	// VkPhysicalDeviceVulkan12Features, it must NOT also include a
+	// VkPhysicalDeviceBufferDeviceAddressFeatures. Vulkan12Features already
+	// carries bufferDeviceAddress, so on a 1.2+ device the standalone struct is
+	// both redundant AND illegal; it is only needed on pre-1.2 devices, where the
+	// feature arrives via VK_KHR_buffer_device_address.
+	//
+	// Chaining both returned VK_ERROR_INITIALIZATION_FAILED (-3) from
+	// vkCreateDevice on a GTX 1060 / driver 580.178.04 — "Couldn't create Vulkan
+	// device", every display driver then failing. It reproduced on any adapter
+	// reporting bufferDeviceAddress; an Intel iGPU that does not report it was
+	// unaffected, which is what made this look like an RT or driver problem
+	// rather than a malformed pNext chain.
+	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
+
 	VkPhysicalDeviceBufferDeviceAddressFeaturesKHR buffer_device_address_features = {};
-	if (buffer_device_address_support) {
+	if (buffer_device_address_support && !enable_1_2_features) {
 		buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
 		buffer_device_address_features.pNext = create_info_next;
 		buffer_device_address_features.bufferDeviceAddress = buffer_device_address_support;
@@ -1453,7 +1468,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	VkPhysicalDeviceVulkan12Features vulkan_1_2_features = {};
 	VkPhysicalDevice16BitStorageFeaturesKHR storage_features = {};
 	VkPhysicalDeviceMultiviewFeatures multiview_features = {};
-	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
+	// enable_1_2_features is hoisted above, next to the buffer-device-address
+	// chaining it now gates.
 	if (enable_1_2_features) {
 		// In Vulkan 1.2 and newer we use a newer struct to enable various features.
 		// Enable Vulkan 1.2 features (descriptor indexing, buffer device address, etc.).
