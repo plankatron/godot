@@ -560,6 +560,34 @@ String RenderingDeviceDriverVulkan::SubgroupCapabilities::supported_operations_d
 /**** GENERIC ****/
 /*****************/
 
+// GODOT_VK_NO_RT=1 — run as if the pathtracing work were not present.
+//
+// Skips BOTH the device extensions the PT work added AND the feature structs it
+// chains. Half-measures do not test anything: an earlier version of this flag
+// skipped only the feature structs, left the extensions enabled, and "RT off"
+// still failed device creation — which proved nothing about RT.
+//
+// Exists because hyper-tps ran on a GTX 1060 / driver 580.178.04 BEFORE the
+// pathtracer landed and fails vkCreateDevice with -3 after it.
+static bool _vk_no_rt() {
+	static const bool v = OS::get_singleton()->get_environment("GODOT_VK_NO_RT") == "1";
+	return v;
+}
+
+// Per-extension skip, for bisecting WHICH pathtracing extension a driver cannot
+// accept. GODOT_VK_SKIP=accel,rtpipe,rayquery,reorder,rtvalid,clas,mesh,nvxbin,nvximg
+// GODOT_VK_NO_RT=1 implies all of them.
+static bool _vk_skip(const char *p_short_name) {
+	if (_vk_no_rt()) {
+		return true;
+	}
+	static const String list = OS::get_singleton()->get_environment("GODOT_VK_SKIP");
+	if (list.is_empty()) {
+		return false;
+	}
+	return ("," + list + ",").contains("," + String(p_short_name) + ",");
+}
+
 void RenderingDeviceDriverVulkan::_register_requested_device_extension(const CharString &p_extension_name, bool p_required) {
 	ERR_FAIL_COND(requested_device_extensions.has(p_extension_name));
 	requested_device_extensions[p_extension_name] = p_required;
@@ -587,16 +615,28 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
+	if (!_vk_skip("accel")) {
+		_register_requested_device_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
+	}
 	_register_requested_device_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false);
-	if (Engine::get_singleton()->is_raytracing_validation_enabled()) {
+	if (!_vk_skip("rtpipe")) {
+		_register_requested_device_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false);
+	}
+	if (!_vk_skip("rayquery")) {
+		_register_requested_device_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME, false);
+	}
+	if (!_vk_skip("reorder")) {
+		_register_requested_device_extension(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, false);
+	}
+	if (Engine::get_singleton()->is_raytracing_validation_enabled() && !_vk_skip("rtvalid")) {
 		_register_requested_device_extension(VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME, false);
 	}
-	_register_requested_device_extension(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_NV_MESH_SHADER_EXTENSION_NAME, false);
+	if (!_vk_skip("clas")) {
+		_register_requested_device_extension(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, false);
+	}
+	if (!_vk_skip("mesh")) {
+		_register_requested_device_extension(VK_NV_MESH_SHADER_EXTENSION_NAME, false);
+	}
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 
 	// We don't actually use this extension, but some runtime components on some platforms
@@ -625,8 +665,12 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	// DLSS requires these NVIDIA-specific Vulkan extensions for binary shader loading
 	// and image view handle access. On Windows, Streamline's interposer adds these
 	// automatically; on Linux with direct NGX, we must register them explicitly.
-	_register_requested_device_extension(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, false);
-	_register_requested_device_extension(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, false);
+	if (!_vk_skip("nvxbin")) {
+		_register_requested_device_extension(VK_NVX_BINARY_IMPORT_EXTENSION_NAME, false);
+	}
+	if (!_vk_skip("nvximg")) {
+		_register_requested_device_extension(VK_NVX_IMAGE_VIEW_HANDLE_EXTENSION_NAME, false);
+	}
 	_register_requested_device_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
 #endif
 
@@ -1408,6 +1452,13 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 
 	void *create_info_next = nullptr;
 
+	// BISECT AID. GODOT_VK_NO_RT=1 skips chaining every ray-tracing feature struct
+	// even when the driver reports the features supported. A GTX 1060 / driver
+	// 580.178.04 fails vkCreateDevice with VK_ERROR_INITIALIZATION_FAILED (-3)
+	// while an Intel iGPU on the same machine succeeds, and these are the only
+	// structs the NVIDIA path chains that the Intel path does not.
+	const bool vk_no_rt = _vk_no_rt();
+
 	// ⛔ VUID-VkDeviceCreateInfo-pNext-02830. If the pNext chain includes a
 	// VkPhysicalDeviceVulkan12Features, it must NOT also include any of the
 	// promoted per-feature structs it subsumes -- among them
@@ -1502,12 +1553,18 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &pipeline_cache_control_features;
 	}
 
+	// NOT CHAINED. This struct was added to the pNext chain with its only field,
+	// deviceFault, left at VK_FALSE — so it enabled nothing while still being one
+	// more structure for the driver to accept. Enabling VK_EXT_device_fault (the
+	// extension, above) is what actually gates vkGetDeviceFaultInfoEXT; the
+	// feature struct is not required to use it.
+	//
+	// Suspected in a vkCreateDevice VK_ERROR_INITIALIZATION_FAILED (-3) on a
+	// GTX 1060 / driver 580.178.04 that survived the VUID-02830 fix. It was the
+	// only structure left in the chain that validation flagged
+	// (VUID-VkDeviceCreateInfo-pNext-pNext, sType 1000341000).
 	VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
-	if (device_fault_support) {
-		device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
-		device_fault_features.pNext = create_info_next;
-		create_info_next = &device_fault_features;
-	}
+	(void)device_fault_features;
 
 #if defined(VK_TRACK_DEVICE_MEMORY)
 	VkDeviceDeviceMemoryReportCreateInfoEXT memory_report_info = {};
@@ -1523,7 +1580,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 #endif
 
 	VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
-	if (acceleration_structure_capabilities.acceleration_structure_support) {
+	if (acceleration_structure_capabilities.acceleration_structure_support && !vk_no_rt) {
 		acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 		acceleration_structure_features.pNext = create_info_next;
 		acceleration_structure_features.accelerationStructure = acceleration_structure_capabilities.acceleration_structure_support;
@@ -1531,7 +1588,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
-	if (raytracing_capabilities.raytracing_pipeline_support) {
+	if (raytracing_capabilities.raytracing_pipeline_support && !vk_no_rt) {
 		raytracing_pipeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
 		raytracing_pipeline_features.pNext = create_info_next;
 		raytracing_pipeline_features.rayTracingPipeline = raytracing_capabilities.raytracing_pipeline_support;
@@ -1539,7 +1596,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
-	if (ray_query_support) {
+	if (ray_query_support && !vk_no_rt) {
 		ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 		ray_query_features.pNext = create_info_next;
 		ray_query_features.rayQuery = ray_query_support;
@@ -1547,7 +1604,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT raytracing_invocation_reorder_features = {};
-	if (raytracing_capabilities.raytracing_pipeline_support && enabled_device_extension_names.has(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME)) {
+	if (raytracing_capabilities.raytracing_pipeline_support && !vk_no_rt && enabled_device_extension_names.has(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME)) {
 		raytracing_invocation_reorder_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT;
 		raytracing_invocation_reorder_features.pNext = create_info_next;
 		raytracing_invocation_reorder_features.rayTracingInvocationReorder = VK_TRUE;
@@ -1555,7 +1612,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
-	if (raytracing_capabilities.validation) {
+	if (raytracing_capabilities.validation && !vk_no_rt) {
 		raytracing_validation_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
 		raytracing_validation_features.pNext = create_info_next;
 		raytracing_validation_features.rayTracingValidation = raytracing_capabilities.validation;
@@ -1563,7 +1620,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
-	if (acceleration_structure_capabilities.cluster_acceleration_structure_support) {
+	if (acceleration_structure_capabilities.cluster_acceleration_structure_support && !vk_no_rt) {
 		clas_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
 		clas_features.pNext = create_info_next;
 		clas_features.clusterAccelerationStructure = VK_TRUE;
@@ -1652,6 +1709,94 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		ERR_FAIL_COND_V_MSG(!device_created, ERR_CANT_CREATE, "Couldn't create a Vulkan device through the VulkanHooks singleton.");
 	} else {
 		VkResult err = vkCreateDevice(physical_device, &create_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_DEVICE), &vk_device);
+
+		// ⛔ SOME DRIVERS ADVERTISE RAY TRACING THEY CANNOT ACTUALLY GRANT.
+		//
+		// A GTX 1060 (Pascal — no RT cores) on driver 580.178.04 reports both
+		// VK_KHR_acceleration_structure and VK_KHR_ray_tracing_pipeline, with
+		// accelerationStructure and rayTracingPipeline both true, and then fails
+		// vkCreateDevice with VK_ERROR_INITIALIZATION_FAILED when they are
+		// enabled. Every capability check passes; only device creation says no.
+		//
+		// Bisected on that hardware: skipping either extension ALONE still fails
+		// (ray_tracing_pipeline requires acceleration_structure); skipping BOTH
+		// succeeds. So retry once with the whole ray-tracing set removed rather
+		// than refusing to boot. The engine then runs without RT instead of
+		// failing every display driver in turn and exiting.
+		//
+		// Before this, such a machine could not start the game at all.
+		if (err == VK_ERROR_INITIALIZATION_FAILED) {
+			static const char *rt_exts[] = {
+				VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+				VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+				VK_KHR_RAY_QUERY_EXTENSION_NAME,
+				VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME,
+				VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
+				VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+			};
+			TightLocalVector<const char *> pruned_extensions;
+			bool had_rt = false;
+			for (uint32_t i = 0; i < enabled_extension_names.size(); i++) {
+				bool is_rt = false;
+				for (const char *rt : rt_exts) {
+					if (strcmp(enabled_extension_names[i], rt) == 0) {
+						is_rt = true;
+						had_rt = true;
+						break;
+					}
+				}
+				if (!is_rt) {
+					pruned_extensions.push_back(enabled_extension_names[i]);
+				}
+			}
+
+			if (had_rt) {
+				// Unlink the ray-tracing feature structs from the pNext chain by
+				// sType. They are stack locals in this function, so this only
+				// re-points the chain — nothing is freed.
+				VkBaseOutStructure *head = nullptr;
+				VkBaseOutStructure *tail = nullptr;
+				for (VkBaseOutStructure *n = (VkBaseOutStructure *)create_info_next; n != nullptr; n = n->pNext) {
+					const bool rt_struct =
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR ||
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR ||
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR ||
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT ||
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV ||
+							n->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+					if (rt_struct) {
+						continue;
+					}
+					if (head == nullptr) {
+						head = n;
+					} else {
+						tail->pNext = n;
+					}
+					tail = n;
+				}
+				if (tail != nullptr) {
+					tail->pNext = nullptr;
+				}
+
+				create_info.pNext = head;
+				create_info.enabledExtensionCount = pruned_extensions.size();
+				create_info.ppEnabledExtensionNames = pruned_extensions.ptr();
+
+				err = vkCreateDevice(physical_device, &create_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_DEVICE), &vk_device);
+				if (err == VK_SUCCESS) {
+					// Downstream code must not believe RT is available.
+					raytracing_capabilities.raytracing_pipeline_support = false;
+					raytracing_capabilities.validation = false;
+					acceleration_structure_capabilities.acceleration_structure_support = false;
+					acceleration_structure_capabilities.cluster_acceleration_structure_support = false;
+					for (const char *rt : rt_exts) {
+						enabled_device_extension_names.erase(rt);
+					}
+					WARN_PRINT("This GPU advertises ray tracing but refused to create a device with it enabled; retrying without ray tracing. Ray-traced features will be unavailable.");
+				}
+			}
+		}
+
 		ERR_FAIL_COND_V_MSG(err != VK_SUCCESS, ERR_CANT_CREATE, vformat("Couldn't create Vulkan device (VkResult error %d).", err));
 	}
 
