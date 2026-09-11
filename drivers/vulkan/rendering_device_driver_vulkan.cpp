@@ -1407,12 +1407,33 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	void *create_info_next = nullptr;
+
+	// ⛔ VUID-VkDeviceCreateInfo-pNext-02830. If the pNext chain includes a
+	// VkPhysicalDeviceVulkan12Features, it must NOT also include any of the
+	// promoted per-feature structs it subsumes -- among them
+	// ShaderFloat16Int8Features, VulkanMemoryModelFeatures and
+	// BufferDeviceAddressFeatures. We chained all three next to Vulkan12Features,
+	// which already sets shaderFloat16 / shaderInt8 / vulkanMemoryModel /
+	// vulkanMemoryModelDeviceScope / bufferDeviceAddress itself.
+	//
+	// vkCreateDevice returned VK_ERROR_INITIALIZATION_FAILED (-3) on a GTX 1060 /
+	// driver 580.178.04, so every display driver failed in turn and the engine
+	// exited with "Unable to create DisplayServer". An RTX 2070 tolerated the same
+	// malformed chain -- a lenient driver, not correct code.
+	//
+	// These structs are only needed on PRE-1.2 devices, where the features arrive
+	// through their individual extensions. On 1.2+ the Vulkan12Features struct
+	// below is the only legal carrier.
+	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
+
 	VkPhysicalDeviceShaderFloat16Int8FeaturesKHR shader_features = {};
-	shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR;
-	shader_features.pNext = create_info_next;
-	shader_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
-	shader_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
-	create_info_next = &shader_features;
+	if (!enable_1_2_features) {
+		shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR;
+		shader_features.pNext = create_info_next;
+		shader_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
+		shader_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
+		create_info_next = &shader_features;
+	}
 
 	// VUID-VkDeviceCreateInfo-pNext-02830: if the pNext chain includes a
 	// VkPhysicalDeviceVulkan12Features, it must NOT also include a
@@ -1427,7 +1448,6 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	// reporting bufferDeviceAddress; an Intel iGPU that does not report it was
 	// unaffected, which is what made this look like an RT or driver problem
 	// rather than a malformed pNext chain.
-	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 
 	VkPhysicalDeviceBufferDeviceAddressFeaturesKHR buffer_device_address_features = {};
 	if (buffer_device_address_support && !enable_1_2_features) {
@@ -1438,7 +1458,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	VkPhysicalDeviceVulkanMemoryModelFeaturesKHR vulkan_memory_model_features = {};
-	if (vulkan_memory_model_support && vulkan_memory_model_device_scope_support) {
+	if (vulkan_memory_model_support && vulkan_memory_model_device_scope_support && !enable_1_2_features) {
 		vulkan_memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR;
 		vulkan_memory_model_features.pNext = create_info_next;
 		vulkan_memory_model_features.vulkanMemoryModel = vulkan_memory_model_support;
