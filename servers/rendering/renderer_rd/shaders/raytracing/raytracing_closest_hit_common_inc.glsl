@@ -500,7 +500,15 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 			vec3 spec_origin = offset_ray_origin(h.hit_pos, spec_dir);
 
 			rayQueryEXT spec_rq;
-			rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS | gl_RayFlagsTerminateOnFirstHitEXT,
+			// NO TerminateOnFirstHit. This distance is a GUIDE: DLSS-RR uses it to
+			// reproject specular history, so it must be the CLOSEST hit. Terminating
+			// on the first hit found returns an arbitrary intersection along the
+			// reflection ray, and which one it is varies with BVH traversal order --
+			// so the value jittered frame to frame and RR held/reprojected specular
+			// history against nonsense. Reported as frames being held too long plus
+			// shimmering. The alpha-test loop below also contradicts the flag: it
+			// exists to keep searching past non-opaque candidates.
+			rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS,
 					0xFF, spec_origin, 0.001, spec_dir, 10000.0);
 			while (rayQueryProceedEXT(spec_rq)) {
 				if (rayQueryGetIntersectionTypeEXT(spec_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
