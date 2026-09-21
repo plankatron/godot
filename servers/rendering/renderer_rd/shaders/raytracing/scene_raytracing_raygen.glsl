@@ -224,7 +224,20 @@ void main() {
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
 		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
 			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(DLSSRR_encodeDiffuseAlbedo(sky_color), 1.0));
+			// The sky goes into the albedo guide TONE-MAPPED, never raw. The guide is
+			// what RR reapplies sharp at output resolution, so a raw sky colour
+			// clamped at 1.0 draws the sun disc's octmap footprint as a SQUARE --
+			// the demodulation seam -- and a flat 1.0 smears every star into a blob.
+			// The gain lifts the night sky over the encoder's 0.04 floor while the
+			// normalize keeps it under 1 with no seam, leaving the demodulated
+			// radiance smooth.
+			// Ported from m-bo-one/godot-rtx 714043c770 (same 4.8 base as this
+			// branch); their prior state was a flat vec4(1.0), ours was the raw
+			// sky_color, so the patch is applied rather than cherry-picked.
+			const float SKY_ALBEDO_GAIN = 8.0;
+			vec3 sky_gained = sky_color * SKY_ALBEDO_GAIN;
+			vec3 sky_albedo = sky_gained / (1.0 + max(sky_gained.r, max(sky_gained.g, sky_gained.b)));
+			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(DLSSRR_encodeDiffuseAlbedo(sky_albedo), 1.0));
 			imageStore(dlss_rr_specular_albedo, pixel, vec4(0.0));
 			imageStore(dlss_rr_normal_roughness, pixel, vec4(-gl_WorldRayDirectionEXT, 0.0));
 			imageStore(dlss_rr_specular_hit_dist, pixel, vec4(-1.0));
