@@ -648,9 +648,35 @@ static void _ngx_log_callback(const char *message, NVSDK_NGX_Logging_Level level
 	print_line(vformat("[NGX LOG] [%d] %s", (int)level, String(message)));
 }
 
+// Runtime kill switch, so DLSS can be taken out of the picture without a rebuild.
+// Same convention as the Vulkan ones in rendering_device_driver_vulkan.cpp
+// (GODOT_VK_NO_RT=1, GODOT_VK_SKIP=...): an env var read once.
+//
+// Needed because use_ngx_dlss now defaults ON for this branch, so "build without
+// it" is no longer the quick way to answer "is DLSS causing this?". Set
+// GODOT_NGX_NO_DLSS=1 and the engine behaves exactly like a use_ngx_dlss=no
+// build at runtime -- NGX never initializes, no feature is created, and the
+// upscaler falls back the same way it does on a build without NGX compiled in.
+static bool _ngx_disabled_by_env() {
+	static const bool v = OS::get_singleton()->get_environment("GODOT_NGX_NO_DLSS") == "1";
+	return v;
+}
+
 static bool _ngx_ensure_init() {
 	if (g_ngx_initialized) {
 		return true;
+	}
+
+	if (_ngx_disabled_by_env()) {
+		// ONCE, and loud enough to find: a silent disable looks identical to a
+		// build that never had NGX, which is the confusion this whole switch exists
+		// to resolve.
+		static bool warned = false;
+		if (!warned) {
+			warned = true;
+			print_line("[NGX DLSS] disabled by GODOT_NGX_NO_DLSS=1 - unset it to re-enable.");
+		}
+		return false;
 	}
 
 	RenderingDevice *rd = RD::get_singleton();
