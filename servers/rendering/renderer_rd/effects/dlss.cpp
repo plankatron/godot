@@ -662,6 +662,37 @@ static bool _ngx_disabled_by_env() {
 	return v;
 }
 
+// DLSS render-preset selection for the NGX (Linux) path.
+//
+// ⛔ WE SET NONE BEFORE THIS. Both features ran on Hint_Render_Preset_Default (0),
+// documented as "default behavior, may or may not change after OTA" -- so image
+// quality depended on the driver's OTA state, and changing presets in a game's
+// UI did nothing on Linux while it visibly did on Windows (which goes through
+// Streamline and DOES set them). Reported by a collaborator as "I'm not seeing
+// any difference between the ray reconstruction presets in your build".
+//
+// The two features take DIFFERENT letters -- this is not interchangeable:
+//   RR  (nvsdk_ngx_defs_dlssd.h): D=4 "Default model (transformer)",
+//       E=5 "Latest transformer model". A/B/C removed; F..O revert to default.
+//   SR  (nvsdk_ngx_defs.h): J=10, K=11 "Best image quality... transformer based",
+//       L=12 Ultra-Perf default, M=13 Perf default. A..E removed; F deprecated;
+//       G/H/I/N/O revert to default.
+// Anything outside those ranges is silently inert, which is the trap: a preset
+// that "does nothing" looks identical to a preset that is not being applied.
+//
+// Override per feature, same env-var convention as GODOT_VK_NO_RT / GODOT_VK_SKIP:
+//   GODOT_NGX_RR_PRESET=D|E     GODOT_NGX_SR_PRESET=J|K|L|M
+static unsigned int _ngx_preset_from_env(const char *p_env, char p_default, char p_lo, char p_hi, unsigned int p_lo_value) {
+	String v = OS::get_singleton()->get_environment(p_env).strip_edges().to_upper();
+	char c = v.is_empty() ? p_default : v[0];
+	if (c < p_lo || c > p_hi) {
+		WARN_PRINT(vformat("[NGX DLSS] %s='%s' is outside %c..%c and would be silently ignored by NGX; using %c.",
+				p_env, v, p_lo, p_hi, p_default));
+		c = p_default;
+	}
+	return p_lo_value + (unsigned int)(c - p_lo);
+}
+
 static bool _ngx_ensure_init() {
 	if (g_ngx_initialized) {
 		return true;
@@ -985,6 +1016,19 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 		// Try DLSS-RR (Ray Reconstruction / denoiser) first if requested
 		if (use_dlss_rr && g_ngx_dlss_rr_available) {
+			// D is NVIDIA's "Default model (transformer)"; E is the latest transformer.
+			// Set explicitly so the model is OURS, not whatever the driver OTA last shipped.
+			{
+				unsigned int rr_preset = _ngx_preset_from_env("GODOT_NGX_RR_PRESET", 'D', 'D', 'O', 4);
+				for (const char *n : { NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Quality,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Balanced,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Performance,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraPerformance }) {
+					NVSDK_NGX_Parameter_SetUI(g_ngx_params, n, rr_preset);
+				}
+				print_line(vformat("[NGX DLSS] DLSS-RR render preset %c (%d)", (char)('D' + (rr_preset - 4)), rr_preset));
+			}
 			NVSDK_NGX_DLSSD_Create_Params dlssd_create = {};
 			dlssd_create.InWidth = ctx->render_width;
 			dlssd_create.InHeight = ctx->render_height;
@@ -1015,6 +1059,19 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 		// Fall back to DLSS-SR (Super Resolution / upscaler only)
 		if (!ctx->feature_created && g_ngx_dlss_sr_available) {
+			// K is "Best image quality preset", transformer based, and the default for
+			// DLAA/Balanced/Quality. Different letter space from RR -- see the note above.
+			{
+				unsigned int sr_preset = _ngx_preset_from_env("GODOT_NGX_SR_PRESET", 'K', 'F', 'O', 6);
+				for (const char *n : { NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,
+						NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
+						NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced,
+						NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
+						NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance }) {
+					NVSDK_NGX_Parameter_SetUI(g_ngx_params, n, sr_preset);
+				}
+				print_line(vformat("[NGX DLSS] DLSS-SR render preset %c (%d)", (char)('F' + (sr_preset - 6)), sr_preset));
+			}
 			NVSDK_NGX_DLSS_Create_Params dlss_create = {};
 			dlss_create.Feature.InWidth = ctx->render_width;
 			dlss_create.Feature.InHeight = ctx->render_height;
