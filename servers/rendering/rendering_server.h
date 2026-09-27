@@ -95,7 +95,7 @@ protected:
 	void _canvas_item_add_circle_bind_compat_84523(RID p_item, const Point2 &p_pos, float p_radius, const Color &p_color);
 	void _instance_set_interpolated_bind_compat_104269(RID p_instance, bool p_interpolated);
 	void _instance_reset_physics_interpolation_bind_compat_104269(RID p_instance);
-	void _viewport_set_size_compat_115799(RID p_viewport, int p_width, int p_height);
+	void _viewport_set_size_bind_compat_115799(RID p_viewport, int p_width, int p_height);
 	void _particles_request_process_time_bind_compat_109142(RID p_particles, real_t p_request_process_time);
 
 	static void _bind_compatibility_methods();
@@ -435,6 +435,8 @@ public:
 	virtual void lightmap_set_shadowmask_textures(RID p_lightmap, RID p_shadow) = 0;
 	virtual RSE::ShadowmaskMode lightmap_get_shadowmask_mode(RID p_lightmap) = 0;
 	virtual void lightmap_set_shadowmask_mode(RID p_lightmap, RSE::ShadowmaskMode p_mode) = 0;
+	virtual float lightmap_get_specular_intensity(RID p_lightmap) = 0;
+	virtual void lightmap_set_specular_intensity(RID p_lightmap, float p_intensity) = 0;
 
 	/* PARTICLES API */
 

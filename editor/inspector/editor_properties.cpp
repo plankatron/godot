@@ -153,6 +153,9 @@ void EditorPropertyVariant::update_property() {
 		}
 		ERR_FAIL_NULL(sub_property);
 
+		// Doesn't affect foldable property types, since they don't start with a bottom editor.
+		set_bottom_editor(sub_property->get_bottom_editor() ? content : nullptr);
+
 		sub_property->set_object_and_property(get_edited_object(), get_edited_property());
 		sub_property->set_name_split_ratio(0);
 		sub_property->set_selectable(false);
@@ -1708,8 +1711,6 @@ void EditorPropertySignal::_edit_pressed() {
 }
 
 void EditorPropertySignal::update_property() {
-	String type = base_type;
-
 	Signal signal = get_edited_property_value();
 
 	edit->set_text("Signal: " + signal.get_name());
@@ -1729,8 +1730,6 @@ EditorPropertySignal::EditorPropertySignal() {
 ///////////////////// CALLABLE /////////////////////////
 
 void EditorPropertyCallable::update_property() {
-	String type = base_type;
-
 	Callable callable = get_edited_property_value();
 
 	edit->set_text("Callable");
@@ -3021,7 +3020,6 @@ EditorPropertyColor::EditorPropertyColor() {
 
 void EditorPropertyNodePath::_set_read_only(bool p_read_only) {
 	assign->set_disabled(p_read_only);
-	menu->set_disabled(p_read_only);
 }
 
 Variant EditorPropertyNodePath::_get_cache_value(const StringName &p_prop, bool &r_valid) const {
@@ -3042,8 +3040,14 @@ void EditorPropertyNodePath::_node_selected(const NodePath &p_path, bool p_absol
 		path = get_tree()->get_edited_scene_root()->get_path_to(to_node);
 	}
 
-	if (p_absolute && base_node) { // for AnimationTrackKeyEdit
-		path = base_node->get_path().rel_path_to(p_path);
+	if (base_node) {
+		if (p_absolute) { // For AnimationTrackKeyEdit.
+			path = base_node->get_path().rel_path_to(p_path);
+		} else {
+			path = p_path;
+		}
+		Node *to_node = base_node->get_node_or_null(path);
+		ERR_FAIL_NULL_EDMSG(to_node, vformat(TTR("Invalid node path \"%s\" (relative to %s)."), path, base_node->get_name()));
 	}
 
 	if (editing_node) {
@@ -3088,8 +3092,9 @@ void EditorPropertyNodePath::_assign_draw() {
 void EditorPropertyNodePath::_update_menu() {
 	const NodePath &np = _get_node_path();
 
-	menu->get_popup()->set_item_disabled(ACTION_CLEAR, np.is_empty());
+	menu->get_popup()->set_item_disabled(ACTION_CLEAR, np.is_empty() || is_read_only());
 	menu->get_popup()->set_item_disabled(ACTION_COPY, np.is_empty());
+	menu->get_popup()->set_item_disabled(ACTION_EDIT, is_read_only());
 
 	Node *edited_node = Object::cast_to<Node>(get_edited_object());
 	menu->get_popup()->set_item_disabled(ACTION_SELECT, !edited_node || !edited_node->has_node(np));
@@ -3396,6 +3401,14 @@ void EditorPropertyResource::_set_read_only(bool p_read_only) {
 }
 
 void EditorPropertyResource::_resource_selected(const Ref<Resource> &p_resource, bool p_inspect) {
+	_select_resource(p_resource, p_inspect, false);
+}
+
+void EditorPropertyResource::_resource_expand_requested(const Ref<Resource> &p_resource, bool p_inspect) {
+	_select_resource(p_resource, p_inspect, true);
+}
+
+void EditorPropertyResource::_select_resource(const Ref<Resource> &p_resource, bool p_inspect, bool p_force_open) {
 	if (p_resource->is_built_in() && !p_resource->get_path().is_empty()) {
 		String parent = p_resource->get_path().get_slice("::", 0);
 		List<String> extensions;
@@ -3413,7 +3426,10 @@ void EditorPropertyResource::_resource_selected(const Ref<Resource> &p_resource,
 	}
 
 	if (!p_inspect && use_sub_inspector) {
-		bool unfold = !get_edited_object()->editor_is_section_unfolded(get_edited_property());
+		bool unfold = p_force_open;
+		if (!unfold) {
+			unfold = !get_edited_object()->editor_is_section_unfolded(get_edited_property());
+		}
 		get_edited_object()->editor_set_section_unfold(get_edited_property(), unfold);
 		user_opened_editor = unfold;
 		update_property();
@@ -3649,6 +3665,7 @@ void EditorPropertyResource::setup(Object *p_object, const String &p_path, const
 
 	resource_picker->connect("resource_selected", callable_mp(this, &EditorPropertyResource::_resource_selected));
 	resource_picker->connect("resource_changed", callable_mp(this, &EditorPropertyResource::_resource_changed));
+	resource_picker->connect("_resource_expand_requested", callable_mp(this, &EditorPropertyResource::_resource_expand_requested));
 
 	for (int i = 0; i < resource_picker->get_child_count(); i++) {
 		Button *b = Object::cast_to<Button>(resource_picker->get_child(i));
@@ -3656,6 +3673,10 @@ void EditorPropertyResource::setup(Object *p_object, const String &p_path, const
 			add_focusable(b);
 		}
 	}
+}
+
+void EditorPropertyResource::make_passthrough(bool p_passthrough) {
+	resource_picker->make_passthrough(p_passthrough);
 }
 
 void EditorPropertyResource::update_property() {
@@ -3670,6 +3691,7 @@ void EditorPropertyResource::update_property() {
 			if (!sub_inspector) {
 				sub_inspector = memnew(EditorInspector);
 				sub_inspector->set_vertical_scroll_mode(ScrollContainer::SCROLL_MODE_DISABLED);
+				sub_inspector->set_show_categories(true, true);
 				sub_inspector->set_use_doc_hints(true);
 
 				EditorInspector *parent_inspector = get_parent_inspector();
@@ -3718,6 +3740,7 @@ void EditorPropertyResource::update_property() {
 				sub_inspector->edit(res.ptr());
 				_update_property_bg();
 			}
+			sub_inspector->set_category_color_level(get_sub_inspector_color_level());
 
 		} else if (sub_inspector) {
 			set_bottom_editor(nullptr);
@@ -3764,6 +3787,13 @@ void EditorPropertyResource::set_use_filter(bool p_use) {
 	use_filter = p_use;
 	if (sub_inspector) {
 		update_property();
+	}
+}
+
+void EditorPropertyResource::update_properties_recursive() {
+	update_property();
+	if (sub_inspector) {
+		sub_inspector->update_properties_recursive();
 	}
 }
 

@@ -62,6 +62,9 @@
 #include "drivers/metal/rendering_shader_container_metal.h"
 
 #include <Metal/Metal.hpp>
+#include <objc/message.h>
+#include <objc/objc.h>
+#include <objc/runtime.h>
 #include <os/log.h>
 #include <os/signpost.h>
 
@@ -70,6 +73,17 @@
 #ifndef MTLGPUAddress
 typedef uint64_t MTLGPUAddress;
 #endif
+
+static bool class_conforms_to_protocol_recursive(Class p_class, Protocol *p_protocol) {
+	Class current = p_class;
+	while (current != nil) {
+		if (class_conformsToProtocol(current, p_protocol)) {
+			return true;
+		}
+		current = class_getSuperclass(current);
+	}
+	return false;
+}
 
 #pragma mark - Logging
 
@@ -112,6 +126,9 @@ RDD::BufferID RenderingDeviceDriverMetal::buffer_create(uint64_t p_size, BitFiel
 			} else {
 				options = base_hazard_tracking | MTL::ResourceStorageModePrivate;
 			}
+			break;
+		case MEMORY_ALLOCATION_TYPE_GPU_MAPPABLE:
+			options = base_hazard_tracking | MTL::ResourceStorageModeShared;
 			break;
 	}
 
@@ -222,7 +239,7 @@ static const MTL::TextureType TEXTURE_TYPE[RDD::TEXTURE_TYPE_MAX] = {
 	MTL::TextureTypeCubeArray,
 };
 
-bool RenderingDeviceDriverMetal::is_valid_linear(TextureFormat const &p_format) const {
+bool RenderingDeviceDriverMetal::is_valid_linear(const TextureFormat &p_format) const {
 	MTLFormatType ft = pixel_formats->getFormatType(p_format.format);
 
 	return p_format.texture_type == TEXTURE_TYPE_2D // Linear textures must be 2D textures.
@@ -420,8 +437,11 @@ RDD::TextureID RenderingDeviceDriverMetal::texture_create_from_extension(uint64_
 	MTL::PixelFormat format = (MTL::PixelFormat)pixel_formats->getMTLPixelFormat(p_format);
 	if (res->pixelFormat() != format) {
 		MTL::TextureSwizzleChannels swizzle = MTL::TextureSwizzleChannels::Default();
+		// newTextureView returns retain count of 1.
 		res = res->newTextureView(format, res->textureType(), NS::Range::Make(0, res->mipmapLevelCount()), NS::Range::Make(0, p_array_layers), swizzle);
 		ERR_FAIL_NULL_V_MSG(res, TextureID(), "Unable to create texture view.");
+	} else {
+		res->retain();
 	}
 
 	_track_resource(res);
@@ -531,7 +551,10 @@ void RenderingDeviceDriverMetal::texture_free(TextureID p_texture) {
 }
 
 uint64_t RenderingDeviceDriverMetal::texture_get_allocation_size(TextureID p_texture) {
-	MTL::Texture *obj = reinterpret_cast<MTL::Texture *>(p_texture.id);
+	// p_texture can contain a wrapped MTLRasterizationRateMap as returned by VisionOSXRInterface,
+	// which (unlike MTLTexture) lacks the allocatedSize method. sendMessageSafe will check that
+	// it responds to the selector before calling it
+	NS::Object *obj = reinterpret_cast<NS::Object *>(p_texture.id);
 	return NS::Object::sendMessageSafe<NS::UInteger>(obj, _MTL_PRIVATE_SEL(allocatedSize));
 }
 
@@ -893,7 +916,7 @@ void RenderingDeviceDriverMetal::_swap_chain_release_buffers(SwapChain *p_swap_c
 }
 
 RDD::SwapChainID RenderingDeviceDriverMetal::swap_chain_create(RenderingContextDriver::SurfaceID p_surface) {
-	RenderingContextDriverMetal::Surface const *surface = (RenderingContextDriverMetal::Surface *)(p_surface);
+	const RenderingContextDriverMetal::Surface *surface = (RenderingContextDriverMetal::Surface *)(p_surface);
 	if (use_barriers) {
 		GODOT_CLANG_WARNING_PUSH_AND_IGNORE("-Wunguarded-availability")
 		add_residency_set_to_main_queue(surface->get_residency_set());
@@ -931,10 +954,7 @@ Error RenderingDeviceDriverMetal::swap_chain_resize(CommandQueueID p_cmd_queue, 
 
 	DataFormat new_data_format = DATA_FORMAT_MAX;
 	ColorSpace new_color_space = COLOR_SPACE_MAX;
-	Error err = surface->resize(p_desired_framebuffer_count, new_data_format, new_color_space);
-	if (err != OK) {
-		return err;
-	}
+	RETURN_IF_ERROR(surface->resize(p_desired_framebuffer_count, new_data_format, new_color_space));
 
 	if (new_data_format != swap_chain->data_format) {
 		_swap_chain_release(swap_chain);
@@ -1012,17 +1032,28 @@ RDD::FramebufferID RenderingDeviceDriverMetal::framebuffer_create(RenderPassID p
 
 	Vector<MTL::Texture *> textures;
 	textures.resize(p_attachments.size());
+	MTL::RasterizationRateMap *rasterization_rate_map = nullptr;
 
 	for (uint32_t i = 0; i < p_attachments.size(); i += 1) {
-		MDAttachment const &a = pass->attachments[i];
-		MTL::Texture *tex = reinterpret_cast<MTL::Texture *>(p_attachments[i].id);
-		if (tex == nullptr) {
+		const MDAttachment &a = pass->attachments[i];
+		id native_attachment = (id)(void *)p_attachments[i].id;
+		Class cls = object_getClass(native_attachment);
+
+		MTL::Texture *tex = nullptr;
+		bool attachment_is_rasterization_rate_map = false;
+		if (class_conforms_to_protocol_recursive(cls, objc_getProtocol("MTLRasterizationRateMap"))) {
+			rasterization_rate_map = reinterpret_cast<MTL::RasterizationRateMap *>(p_attachments[i].id);
+			attachment_is_rasterization_rate_map = true;
+		} else if (class_conforms_to_protocol_recursive(cls, objc_getProtocol("MTLTexture"))) {
+			tex = reinterpret_cast<MTL::Texture *>(p_attachments[i].id);
+		}
+		if (tex == nullptr && !attachment_is_rasterization_rate_map) {
 #if DEV_ENABLED
 			WARN_PRINT("Invalid texture for attachment " + itos(i));
 #endif
 		}
 		if (a.samples > 1) {
-			if (tex->sampleCount() != a.samples) {
+			if (tex != nullptr && tex->sampleCount() != a.samples) {
 #if DEV_ENABLED
 				WARN_PRINT("Mismatched sample count for attachment " + itos(i) + "; expected " + itos(a.samples) + ", got " + itos(tex->sampleCount()));
 #endif
@@ -1032,6 +1063,7 @@ RDD::FramebufferID RenderingDeviceDriverMetal::framebuffer_create(RenderPassID p
 	}
 
 	MDFrameBuffer *fb = memnew(MDFrameBuffer(textures, Size2i(p_width, p_height)));
+	fb->rasterization_rate_map = rasterization_rate_map;
 	return FramebufferID(fb);
 }
 
@@ -1042,13 +1074,34 @@ void RenderingDeviceDriverMetal::framebuffer_free(FramebufferID p_framebuffer) {
 
 #pragma mark - Shader
 
-void RenderingDeviceDriverMetal::shader_cache_free_entry(const SHA256Digest &key) {
-	if (ShaderCacheEntry **pentry = _shader_cache.getptr(key); pentry != nullptr) {
-		ShaderCacheEntry *entry = *pentry;
-		_shader_cache.erase(key);
-		entry->library.reset();
-		memdelete(entry);
+void RenderingDeviceDriverMetal::shader_cache_free_entry(ShaderCacheEntry *p_entry) {
+	MutexLock lock(_shader_cache_lock);
+	// Only remove the map slot if it still refers to this exact entry. A concurrent
+	// creation for the same hash may have replaced it, in which case that newer entry
+	// (and its library) must be left untouched.
+	if (ShaderCacheEntry **pentry = _shader_cache.getptr(p_entry->key); pentry != nullptr && *pentry == p_entry) {
+		_shader_cache.erase(p_entry->key);
 	}
+	memdelete(p_entry);
+}
+
+std::optional<std::shared_ptr<MDLibrary>> RenderingDeviceDriverMetal::shader_cache_get_library(const SHA256Digest &key) {
+	MutexLock lock(_shader_cache_lock);
+
+	if (ShaderCacheEntry **p = _shader_cache.getptr(key); p != nullptr) {
+		if (std::shared_ptr<MDLibrary> lib = (*p)->library.lock()) {
+			return lib;
+		}
+		// Library was released; remove stale cache entry and recreate.
+		_shader_cache.erase(key);
+	}
+
+	return std::nullopt;
+}
+
+void RenderingDeviceDriverMetal::shader_cache_set_entry(const SHA256Digest &key, ShaderCacheEntry *p_entry) {
+	MutexLock lock(_shader_cache_lock);
+	_shader_cache[key] = p_entry;
 }
 
 template <typename T, typename U>
@@ -1121,14 +1174,9 @@ RDD::ShaderID RenderingDeviceDriverMetal::shader_create_from_container(const Ref
 		if (shader.shader_stage == RDD::ShaderStage::SHADER_STAGE_COMPUTE) {
 			pipeline_type = PIPELINE_TYPE_COMPUTE;
 		}
-
-		if (ShaderCacheEntry **p = _shader_cache.getptr(shader_data.hash); p != nullptr) {
-			if (std::shared_ptr<MDLibrary> lib = (*p)->library.lock()) {
-				libraries[shader.shader_stage] = lib;
-				continue;
-			}
-			// Library was released; remove stale cache entry and recreate.
-			_shader_cache.erase(shader_data.hash);
+		if (std::optional<std::shared_ptr<MDLibrary>> lib = shader_cache_get_library(shader_data.hash); lib) {
+			libraries[shader.shader_stage] = std::move(*lib);
+			continue;
 		}
 
 		if (shader.code_decompressed_size > 0) {
@@ -1166,7 +1214,7 @@ RDD::ShaderID RenderingDeviceDriverMetal::shader_create_from_container(const Ref
 			library = MDLibrary::create(cd, device, source.get(), options.get(), _shader_load_strategy);
 		}
 
-		_shader_cache[shader_data.hash] = cd;
+		shader_cache_set_entry(shader_data.hash, cd);
 		libraries[shader.shader_stage] = library;
 	}
 
@@ -1403,7 +1451,7 @@ RDD::UniformSetID RenderingDeviceDriverMetal::uniform_set_create(VectorView<Boun
 #undef ADD_USAGE
 
 		if (!use_barriers) {
-			for (KeyValue<MTL::Resource *, StageResourceUsage> const &keyval : bound_resources) {
+			for (const KeyValue<MTL::Resource *, StageResourceUsage> &keyval : bound_resources) {
 				ResourceVector *resources = set->usage_to_resources.getptr(keyval.value);
 				if (resources == nullptr) {
 					resources = &set->usage_to_resources.insert(keyval.value, ResourceVector())->value;
@@ -1609,6 +1657,7 @@ RDD::RenderPassID RenderingDeviceDriverMetal::render_pass_create(VectorView<Atta
 		subpass.color_references = p_subpasses[i].color_references;
 		subpass.depth_stencil_reference = p_subpasses[i].depth_stencil_reference;
 		subpass.resolve_references = p_subpasses[i].resolve_references;
+		subpass.depth_resolve_reference = p_subpasses[i].depth_resolve_reference;
 	}
 
 	static const MTL::LoadAction LOAD_ACTIONS[] = {
@@ -1626,7 +1675,7 @@ RDD::RenderPassID RenderingDeviceDriverMetal::render_pass_create(VectorView<Atta
 	attachments.resize(p_attachments.size());
 
 	for (uint32_t i = 0; i < p_attachments.size(); i++) {
-		Attachment const &a = p_attachments[i];
+		const Attachment &a = p_attachments[i];
 		MDAttachment &mda = attachments.write[i];
 		MTL::PixelFormat format = pf.getMTLPixelFormat(a.format);
 		mda.format = format;
@@ -1810,7 +1859,7 @@ RenderingDeviceDriverMetal::Result<NS::SharedPtr<MTL::Function>> RenderingDevice
 	uint32_t j = 0;
 	while (i < constants.size() && j < p_specialization_constants.size()) {
 		MTL::FunctionConstant *curr = (MTL::FunctionConstant *)constants[i];
-		PipelineSpecializationConstant const &sc = p_specialization_constants[indexes[j]];
+		const PipelineSpecializationConstant &sc = p_specialization_constants[indexes[j]];
 		if (curr->index() == sc.constant_id) {
 			switch (curr->type()) {
 				case MTL::DataTypeBool:
@@ -1899,18 +1948,18 @@ RDD::PipelineID RenderingDeviceDriverMetal::render_pipeline_create(
 	NS::SharedPtr<MTL::RenderPipelineDescriptor> desc = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
 
 	{
-		MDSubpass const &subpass = pass->subpasses[p_render_subpass];
+		const MDSubpass &subpass = pass->subpasses[p_render_subpass];
 		for (uint32_t i = 0; i < subpass.color_references.size(); i++) {
 			uint32_t attachment = subpass.color_references[i].attachment;
 			if (attachment != AttachmentReference::UNUSED) {
-				MDAttachment const &a = pass->attachments[attachment];
+				const MDAttachment &a = pass->attachments[attachment];
 				desc->colorAttachments()->object(i)->setPixelFormat(a.format);
 			}
 		}
 
 		if (subpass.depth_stencil_reference.attachment != AttachmentReference::UNUSED) {
 			uint32_t attachment = subpass.depth_stencil_reference.attachment;
-			MDAttachment const &a = pass->attachments[attachment];
+			const MDAttachment &a = pass->attachments[attachment];
 
 			if (a.type & MDAttachmentType::Depth) {
 				desc->setDepthAttachmentPixelFormat(a.format);
@@ -2545,8 +2594,8 @@ uint64_t RenderingDeviceDriverMetal::get_lazily_memory_used() {
 }
 
 uint64_t RenderingDeviceDriverMetal::limit_get(Limit p_limit) {
-	MetalDeviceProperties const &props = (*device_properties);
-	MetalLimits const &limits = props.limits;
+	const MetalDeviceProperties &props = (*device_properties);
+	const MetalLimits &limits = props.limits;
 	uint64_t safe_unbounded = ((uint64_t)1 << 30);
 #if defined(DEV_ENABLED)
 #define UNKNOWN(NAME) \
@@ -2694,6 +2743,18 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_POINT_SIZE:
 			return true;
+		case SUPPORTS_FRAMEBUFFER_DEPTH_RESOLVE:
+			return device_properties->features.supports_msaa_depth_resolve;
+		case SUPPORTS_RASTERIZATION_RATE_MAP: {
+			bool is_supported = device->supportsRasterizationRateMap(1);
+#if defined(VISIONOS_ENABLED)
+			// We need to support 2 layers on visionOS. Using more than 2 layers shouldn't be needed.
+			is_supported &= device->supportsRasterizationRateMap(2);
+#endif
+			return is_supported;
+		}
+		case SUPPORTS_GPU_MAPPABLE_BUFFER:
+			return true;
 		default:
 			return false;
 	}
@@ -2760,17 +2821,9 @@ RenderingDeviceDriverMetal::~RenderingDeviceDriverMetal() {
 		memdelete(kv.value);
 	}
 
-	if (shader_container_format != nullptr) {
-		memdelete(shader_container_format);
-	}
-
-	if (pixel_formats != nullptr) {
-		memdelete(pixel_formats);
-	}
-
-	if (device_properties != nullptr) {
-		memdelete(device_properties);
-	}
+	memdelete(shader_container_format);
+	memdelete(pixel_formats);
+	memdelete(device_properties);
 }
 
 #pragma mark - Initialization

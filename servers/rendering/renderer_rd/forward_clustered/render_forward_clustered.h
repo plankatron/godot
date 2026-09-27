@@ -184,7 +184,7 @@ protected:
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
 
 	struct RenderListParameters;
 	struct GeometryInstanceSurfaceDataCache;
@@ -269,7 +269,7 @@ protected:
 	};
 
 	struct LightmapData {
-		float normal_xform[12];
+		float normal_xform_and_specular_intensity[12];
 		float texture_size[2];
 		float exposure_normalization;
 		uint32_t flags;
@@ -412,6 +412,7 @@ protected:
 		LightmapData lightmaps[MAX_LIGHTMAPS];
 		RID lightmap_ids[MAX_LIGHTMAPS];
 		bool lightmap_has_sh[MAX_LIGHTMAPS];
+		bool lightmap_has_specular[MAX_LIGHTMAPS];
 		uint32_t lightmaps_used = 0;
 		uint32_t max_lightmaps;
 		RID lightmap_buffer;
@@ -471,6 +472,9 @@ protected:
 				uint32_t uses_projector : 1;
 				uint32_t uses_forward_gi : 1;
 				uint32_t uses_lightmap : 1;
+
+				// This value is not part of the sort key as there are no more available bits.
+				uint32_t uses_lightmap_specular : 1;
 			};
 			uint32_t value;
 		};
@@ -527,6 +531,7 @@ protected:
 				uint64_t uses_projector : 1;
 				uint64_t uses_forward_gi : 1;
 				uint64_t uses_lightmap : 1;
+				// "uses_lightmap_specular" is excluded as there are no more available bits.
 
 				// Sorted based on optimal order for respecting priority and reducing the amount of rebinding of shaders, materials,
 				// and geometry. This current order was found to be the most optimal in large projects. If you wish to measure
@@ -546,6 +551,7 @@ protected:
 		uint32_t flags = 0;
 		uint32_t rt_pass_flags = 0;
 		uint32_t surface_index = 0;
+		bool uses_lightmap_specular = false;
 		uint32_t color_pass_inclusion_mask = 0;
 
 		void *surface = nullptr;
