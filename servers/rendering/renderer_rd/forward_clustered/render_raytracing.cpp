@@ -2330,6 +2330,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		bool transform_moved;
 		RTMaterialData *mat_data;
 		uint32_t inst_flags;
+		uint32_t instance_uniforms_ofs;
 	};
 	LocalVector<PendingMMSurface> pending_mm_surfaces;
 
@@ -2395,6 +2396,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				geom.aabb_size_x = (float)ps->culling_aabb.size.x;
 				geom.aabb_size_y = (float)ps->culling_aabb.size.y;
 				geom.aabb_size_z = (float)ps->culling_aabb.size.z;
+				geom.instance_uniforms_ofs = uint32_t(inst->shader_uniforms_offset);
 				geometry_data.push_back(geom);
 
 				if (inst->transform_status == RenderForwardClustered::GeometryInstanceForwardClustered::TransformStatus::MOVED) {
@@ -2517,6 +2519,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				pending.transform_moved = transform_moved;
 				pending.mat_data = mat_data;
 				pending.inst_flags = inst_flags;
+				pending.instance_uniforms_ofs = uint32_t(inst->shader_uniforms_offset);
 				pending_mm_surfaces.push_back(pending);
 
 				mm_surf = mm_surf->next;
@@ -2614,7 +2617,9 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			blas_transforms.push_back(final_transform);
 
 			blass.push_back(surf_data->blas);
-			geometry_data.push_back(surf_data->geometry);
+			RT_GeometryData inst_geom = surf_data->geometry;
+			inst_geom.instance_uniforms_ofs = uint32_t(inst->shader_uniforms_offset);
+			geometry_data.push_back(inst_geom);
 
 			if (inst->transform_status == RenderForwardClustered::GeometryInstanceForwardClustered::TransformStatus::MOVED) {
 				motion_indices.push_back((int32_t)motion_transforms.size());
@@ -2708,7 +2713,9 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		if (use_merged) {
 			blass.push_back(merged_sd.blas);
 			blas_transforms.push_back(pending.instance_transform);
-			geometry_data.push_back(merged_sd.geometry);
+			RT_GeometryData mm_geom = merged_sd.geometry;
+			mm_geom.instance_uniforms_ofs = pending.instance_uniforms_ofs;
+			geometry_data.push_back(mm_geom);
 			sbt_offsets.push_back(pending.mat_data->rt_sbt_offset);
 			material_data.push_back(pending.mat_data->data);
 			motion_indices.push_back(-1);
@@ -2766,7 +2773,9 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 
 				blass.push_back(surf_data->blas);
 				blas_transforms.push_back(final_transform);
-				geometry_data.push_back(surf_data->geometry);
+				RT_GeometryData mm_geom = surf_data->geometry;
+				mm_geom.instance_uniforms_ofs = pending.instance_uniforms_ofs;
+				geometry_data.push_back(mm_geom);
 				sbt_offsets.push_back(pending.mat_data->rt_sbt_offset);
 				material_data.push_back(pending.mat_data->data);
 

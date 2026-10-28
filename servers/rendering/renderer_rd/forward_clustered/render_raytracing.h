@@ -91,7 +91,11 @@ struct alignas(16) RT_GeometryData {
 	// RT_OFFSET_NONE (all bits set) when the surface lacks that custom array --
 	// unambiguous because format 0xFF is not a valid ARRAY_CUSTOM_* value.
 	uint32_t custom_packed[4];
-	uint32_t _pad[1];
+	// GDShader `instance uniform` base: index (in vec4s) into global_shader_uniforms
+	// for THIS TLAS instance, as the raster path's instance_uniforms_ofs. Set per
+	// TLAS entry (geometry_data is one entry per instance), never in the shared
+	// RTSurfaceData::geometry. 0xFFFFFFFF when the instance has none.
+	uint32_t instance_uniforms_ofs;
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 

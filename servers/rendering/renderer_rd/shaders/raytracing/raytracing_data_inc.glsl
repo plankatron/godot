@@ -51,7 +51,9 @@ struct GeometryData {
 	// CUSTOM0-3 location: bits 0-23 byte offset in attribute_stride, bits 24-31
 	// ARRAY_CUSTOM_* format. OFFSET_NONE when the surface has no such array.
 	uint custom_packed[4];
-	uint _pad[1];
+	// GDShader `instance uniform` base for this TLAS instance (vec4 index into
+	// global_shader_uniforms); what ShaderCompiler's instance_uniform_index_variable reads.
+	uint instance_uniforms_ofs;
 };
 
 void get_aabb_compression_xforms(GeometryData geom, out mat4 aabb_xform, out mat4 inv_aabb_xform) {

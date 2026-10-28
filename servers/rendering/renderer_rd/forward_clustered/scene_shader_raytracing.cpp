@@ -1711,7 +1711,12 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.default_filter = ShaderLanguage::FILTER_LINEAR_MIPMAP;
 		actions.default_repeat = ShaderLanguage::REPEAT_ENABLE;
 		actions.global_buffer_array_variable = "global_shader_uniforms.data";
-		actions.instance_uniform_index_variable = "instances.data[instance_index_interp].instance_uniforms_ofs";
+		// The raster string (instances.data[instance_index_interp]) names a vertex
+		// output and the raster instance buffer, neither of which exists in a hit
+		// shader: every material with an `instance uniform` failed to compile and
+		// fell back to the untextured default hit group. Hit stages read the
+		// per-TLAS-instance GeometryData instead (all three declare geometries[]).
+		actions.instance_uniform_index_variable = "geometries[gl_InstanceCustomIndexEXT].instance_uniforms_ofs";
 
 		actions.check_multiview_samplers = RendererCompositorRD::get_singleton()->is_xr_enabled(); // Make sure we check sampling multiview textures.
 
