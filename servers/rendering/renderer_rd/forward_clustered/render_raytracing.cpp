@@ -1599,6 +1599,10 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 
 				uint32_t offset = cse->uniform_offsets[u.order];
 				uint32_t size = ShaderLanguage::get_datatype_size(u.type);
+				if (u.array_size > 0 && u.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+					// std140 arrays: each element in its own 16-byte slot (ShaderCompiler's layout).
+					size = MAX(size * u.array_size, 16u * u.array_size);
+				}
 				if (offset + size > cse->uniform_total_size) {
 					continue;
 				}
@@ -1609,6 +1613,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 					int32_t idx = material_storage->global_shader_uniform_get_buffer_index(kv.key);
 					uint32_t uidx = (idx >= 0) ? (uint32_t)idx : 0;
 					memcpy(dst, &uidx, sizeof(uint32_t));
+				} else if (u.array_size > 0) {
+					// pack_uniform is scalar-only: an array's Packed*Array failed its type
+					// test and every element read 0 (terrain_layers' layer_index[] -> layer 0,
+					// the magenta checker, on map_geiss_world). The raster packer, shared.
+					Variant val = material_storage->material_get_param(p_material_rid, kv.key);
+					RendererRD::MaterialStorage::fill_uniform_std140(u, val.get_type() == Variant::NIL ? nullptr : &val, dst, true);
 				} else {
 					Variant val = material_storage->material_get_param(p_material_rid, kv.key);
 					pack_uniform(u, val, dst);

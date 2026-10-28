@@ -329,6 +329,12 @@ private:
 public:
 	static MaterialStorage *get_singleton();
 
+	// Packs one buffer uniform (arrays included) into its std140 slot exactly as a
+	// material's uniform buffer does: p_value when given, else the shader default, else
+	// a typed zero. Not for global, instance or texture uniforms. Shared with the RT
+	// material buffer, which had its own scalar-only packer and zeroed every array.
+	static void fill_uniform_std140(const ShaderLanguage::ShaderNode::Uniform &p_uniform, const Variant *p_value, uint8_t *p_data, bool p_use_linear_color);
+
 	MaterialStorage();
 	virtual ~MaterialStorage();
 
