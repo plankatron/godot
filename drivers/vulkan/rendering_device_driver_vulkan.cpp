@@ -992,6 +992,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
 		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
+		VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 		VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clas_features = {};
 
@@ -1102,6 +1103,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &sync_2_features;
 		}
 
+		if (enabled_device_extension_names.has(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
+			device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+			device_fault_features.pNext = next_features;
+			next_features = &device_fault_features;
+		}
+
 		VkPhysicalDeviceFeatures2 device_features_2 = {};
 		device_features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		device_features_2.pNext = next_features;
@@ -1179,7 +1186,10 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		}
 
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
-			device_fault_support = true;
+			// vkGetDeviceFaultInfoEXT is only valid with the deviceFault FEATURE enabled, not just
+			// the extension: drivers crash without it (NVIDIA-RTX/godot nvidia-pt-dlss, pcanilho
+			// 8d5a342af5). So the report is on only when the device says it supports the feature.
+			device_fault_support = device_fault_features.deviceFault;
 		}
 #if defined(VK_TRACK_DEVICE_MEMORY)
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME)) {
@@ -1556,18 +1566,19 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &pipeline_cache_control_features;
 	}
 
-	// NOT CHAINED. This struct was added to the pNext chain with its only field,
-	// deviceFault, left at VK_FALSE — so it enabled nothing while still being one
-	// more structure for the driver to accept. Enabling VK_EXT_device_fault (the
-	// extension, above) is what actually gates vkGetDeviceFaultInfoEXT; the
-	// feature struct is not required to use it.
-	//
-	// Suspected in a vkCreateDevice VK_ERROR_INITIALIZATION_FAILED (-3) on a
-	// GTX 1060 / driver 580.178.04 that survived the VUID-02830 fix. It was the
-	// only structure left in the chain that validation flagged
-	// (VUID-VkDeviceCreateInfo-pNext-pNext, sType 1000341000).
+	// CHAINED WITH deviceFault = VK_TRUE, and only when the device reports the feature
+	// (device_fault_support, from the features query). b7b5b330f3 had removed it from the chain:
+	// it used to go in with deviceFault left VK_FALSE, so it enabled nothing, and was suspected in a
+	// vkCreateDevice -3 on a GTX 1060 / 580.178.04 (VUID-VkDeviceCreateInfo-pNext-pNext). But the
+	// extension alone does not make vkGetDeviceFaultInfoEXT valid; the feature has to be enabled.
+	// This is upstream's shape (nvidia-pt-dlss).
 	VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
-	(void)device_fault_features;
+	if (device_fault_support) {
+		device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+		device_fault_features.pNext = create_info_next;
+		device_fault_features.deviceFault = VK_TRUE;
+		create_info_next = &device_fault_features;
+	}
 
 #if defined(VK_TRACK_DEVICE_MEMORY)
 	VkDeviceDeviceMemoryReportCreateInfoEXT memory_report_info = {};
