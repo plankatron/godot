@@ -935,8 +935,8 @@ void DLSSEffect::upscale(const DLSSContext::Parameters &p_params) {
 		if (p_params.dlss_rr_normal_roughness.is_valid()) {
 			res[num_resources++].rid = p_params.dlss_rr_normal_roughness;
 		}
-		if (p_params.dlss_rr_specular_hit_dist.is_valid()) {
-			res[num_resources++].rid = p_params.dlss_rr_specular_hit_dist;
+		if (p_params.dlss_rr_specular_motion_vectors.is_valid()) {
+			res[num_resources++].rid = p_params.dlss_rr_specular_motion_vectors;
 		}
 	}
 
@@ -1043,7 +1043,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		eval.InFrameTimeDeltaInMsec = p_params.delta_time * 1000.0f;
 
 		// G-buffer inputs for DLSS-RR (stack-allocated, valid for duration of evaluate call)
-		NVSDK_NGX_Resource_VK diffuse_res, specular_res, normal_res, hit_dist_res;
+		NVSDK_NGX_Resource_VK diffuse_res, specular_res, normal_res, specular_mvec_res;
 		if (p_params.dlss_rr_diffuse_albedo.is_valid()) {
 			diffuse_res = _ngx_make_resource(p_params.dlss_rr_diffuse_albedo, false);
 			eval.pInDiffuseAlbedo = &diffuse_res;
@@ -1057,9 +1057,11 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			eval.pInNormals = &normal_res;
 			eval.pInRoughness = &normal_res; // Packed mode: roughness in W channel of normals
 		}
-		if (p_params.dlss_rr_specular_hit_dist.is_valid()) {
-			hit_dist_res = _ngx_make_resource(p_params.dlss_rr_specular_hit_dist, false);
-			eval.pInSpecularHitDistance = &hit_dist_res;
+		// Specular motion vectors share the velocity convention (UV space), so the
+		// InMVScale above covers them too; NGX has no separate scale for this guide.
+		if (p_params.dlss_rr_specular_motion_vectors.is_valid()) {
+			specular_mvec_res = _ngx_make_resource(p_params.dlss_rr_specular_motion_vectors, false);
+			eval.pInMotionVectorsReflections = &specular_mvec_res;
 		}
 
 		// View/projection matrices for DLSS-RR
