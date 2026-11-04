@@ -27,6 +27,16 @@ GeometryData rt_geom = geometries[rt_geometry_idx];
 #ifdef RT_USES_INSTANCE_CUSTOM
 instance_custom = fetch_instance_custom(rt_geom, uint(gl_PrimitiveID));
 #endif
+// CUSTOM0-3 from the mesh; a surface without custom arrays pays this one compare.
+if (rt_geom.custom_offsets != 0xFFFFFFFFu) {
+	uint rt_ci0, rt_ci1, rt_ci2;
+	get_triangle_indices(rt_geom, rt_ci0, rt_ci1, rt_ci2);
+	vec3 rt_cbary = vec3(1.0 - hit_attribs.bary_or_uv.x - hit_attribs.bary_or_uv.y, hit_attribs.bary_or_uv);
+	custom0_attrib = fetch_custom(rt_geom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom1_attrib = fetch_custom(rt_geom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom2_attrib = fetch_custom(rt_geom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+	custom3_attrib = fetch_custom(rt_geom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
+}
 read_model_matrix = mat4(gl_ObjectToWorldEXT);
 // Matches the rasterizer's uniform-scale case; instance scale flags that would
 // select the inverse-transpose form are not available to hit shaders.

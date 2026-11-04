@@ -12,7 +12,7 @@ layout(buffer_reference, std430) readonly buffer Uint32Buffer {
 };
 
 // ============================================================================
-// GEOMETRY DATA (matches C++ RT_GeometryData, 160 bytes, 8-byte alignment)
+// GEOMETRY DATA (matches C++ RT_GeometryData, 168 bytes, 8-byte alignment)
 // ============================================================================
 struct GeometryData {
 	uint64_t vertex_address;
@@ -59,6 +59,9 @@ struct GeometryData {
 	uint material_index; // See rt_pack_material_index().
 	uint material_flags;
 	uint material_feedback_index; // Texture streaming feedback slot, 0xFFFFFFFF = none.
+	// CUSTOM0-3 inside attribute_stride, 8 bits per slot: byte offset (0xFF = absent) and ARRAY_CUSTOM_* format.
+	uint custom_offsets;
+	uint custom_formats;
 	uint pad;
 };
 

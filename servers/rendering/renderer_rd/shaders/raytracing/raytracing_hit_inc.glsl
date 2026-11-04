@@ -189,6 +189,44 @@ vec4 fetch_color(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 }
 
 // ============================================================================
+// CUSTOM0-3 FETCHING (RSE::ArrayCustomFormat; missing components read as the rasterizer's (0, 0, 0, 1))
+// ============================================================================
+vec4 fetch_custom_vertex(in GeometryData geom, uint word_offset, uint format, uint index) {
+	Uint32Buffer attr = Uint32Buffer(geom.attribute_address);
+	uint base = index * (geom.attribute_stride >> 2) + word_offset;
+	switch (format) {
+		case 0u: // RGBA8_UNORM
+			return unpackUnorm4x8(attr.v[base]);
+		case 1u: // RGBA8_SNORM
+			return unpackSnorm4x8(attr.v[base]);
+		case 2u: // RG_HALF
+			return vec4(unpackHalf2x16(attr.v[base]), 0.0, 1.0);
+		case 3u: // RGBA_HALF
+			return vec4(unpackHalf2x16(attr.v[base]), unpackHalf2x16(attr.v[base + 1u]));
+		case 4u: // R_FLOAT
+			return vec4(uintBitsToFloat(attr.v[base]), 0.0, 0.0, 1.0);
+		case 5u: // RG_FLOAT
+			return vec4(uintBitsToFloat(uvec2(attr.v[base], attr.v[base + 1u])), 0.0, 1.0);
+		case 6u: // RGB_FLOAT
+			return vec4(uintBitsToFloat(uvec3(attr.v[base], attr.v[base + 1u], attr.v[base + 2u])), 1.0);
+		default: // RGBA_FLOAT
+			return uintBitsToFloat(uvec4(attr.v[base], attr.v[base + 1u], attr.v[base + 2u], attr.v[base + 3u]));
+	}
+}
+
+vec4 fetch_custom(in GeometryData geom, uint slot, uint i0, uint i1, uint i2, vec3 bary) {
+	uint byte_offset = (geom.custom_offsets >> (slot * 8u)) & 0xFFu;
+	if (byte_offset == 0xFFu || geom.attribute_address == 0ul) {
+		return vec4(0.0);
+	}
+	uint format = (geom.custom_formats >> (slot * 8u)) & 0xFFu;
+	uint word_offset = byte_offset >> 2;
+	return bary.x * fetch_custom_vertex(geom, word_offset, format, i0) +
+			bary.y * fetch_custom_vertex(geom, word_offset, format, i1) +
+			bary.z * fetch_custom_vertex(geom, word_offset, format, i2);
+}
+
+// ============================================================================
 // TBN FETCHING
 // ============================================================================
 void axis_angle_to_tbn(vec3 axis, float angle, out vec3 tangent, out vec3 binormal, out vec3 normal) {

@@ -2510,11 +2510,18 @@ static void _fill_surface_geometry_data(
 		geom.uv2_byte_offset = attrib_offset;
 		attrib_offset += attributes_compressed ? sizeof(uint16_t) * 2 : sizeof(float) * 2;
 	}
+	geom.custom_offsets = RT_CUSTOM_NONE;
 	for (int ci = 0; ci < RSE::ARRAY_CUSTOM_COUNT; ci++) {
 		const uint32_t fmt_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
 		if (surface_format & (1ULL << (RSE::ARRAY_CUSTOM0 + ci))) {
 			uint32_t fmt = (surface_format >> fmt_shift[ci]) & RSE::ARRAY_FORMAT_CUSTOM_MASK;
 			const uint32_t fmtsize[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
+			// Hit shaders read CUSTOM<ci> from here (fetch_custom); 0xFF is the absent marker.
+			if (attrib_offset < 0xFFu) {
+				const uint32_t shift = uint32_t(ci) * 8u;
+				geom.custom_offsets = (geom.custom_offsets & ~(0xFFu << shift)) | (attrib_offset << shift);
+				geom.custom_formats |= fmt << shift;
+			}
 			attrib_offset += fmtsize[fmt];
 		}
 	}
@@ -4533,6 +4540,7 @@ void RTTlasBuilder::_add_procedural_instance(const Instance &p_inst, const Insta
 	geom.uv_byte_offset = RT_OFFSET_NONE;
 	geom.uv2_byte_offset = RT_OFFSET_NONE;
 	geom.color_byte_offset = RT_OFFSET_NONE;
+	geom.custom_offsets = RT_CUSTOM_NONE;
 	geom.aabb_size_x = (float)ps->culling_aabb.size.x;
 	geom.aabb_size_y = (float)ps->culling_aabb.size.y;
 	geom.aabb_size_z = (float)ps->culling_aabb.size.z;

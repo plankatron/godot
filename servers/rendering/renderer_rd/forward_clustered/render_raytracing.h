@@ -74,7 +74,7 @@ namespace RendererSceneRenderImplementation {
 class RenderForwardClustered;
 class SceneShaderRaytracing;
 
-// Must match GLSL GeometryData (std430, 160 bytes, 8-byte alignment).
+// Must match GLSL GeometryData (std430, 168 bytes, 8-byte alignment).
 struct alignas(8) RT_GeometryData {
 	uint64_t vertex_buffer_address;
 	uint64_t attribute_buffer_address;
@@ -112,9 +112,13 @@ struct alignas(8) RT_GeometryData {
 	uint32_t material_index; // See rt_pack_material_index().
 	uint32_t material_flags;
 	uint32_t material_feedback_index; // Texture streaming feedback slot, UINT32_MAX = none.
+	// CUSTOM0-3 inside attribute_stride, 8 bits per slot (slot N in bits 8N-8N+7).
+	uint32_t custom_offsets; // Byte offset; 0xFF = slot absent, so RT_CUSTOM_NONE = no custom arrays.
+	uint32_t custom_formats; // RSE::ArrayCustomFormat.
 	uint32_t pad;
 };
-static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
+static_assert(sizeof(RT_GeometryData) == 168, "RT_GeometryData must be 168 bytes for std430");
+constexpr uint32_t RT_CUSTOM_NONE = 0xFFFFFFFFu;
 
 // Marks an absent field in RT_GeometryData::instance_data_layout.
 static constexpr uint32_t RT_INSTANCE_DATA_FIELD_NONE = 0xFF;
