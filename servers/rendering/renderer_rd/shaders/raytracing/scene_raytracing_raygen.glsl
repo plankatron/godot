@@ -584,7 +584,7 @@ void main() {
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
 		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags) && !composite_passthrough) {
 			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(vec3(DLSSRR_SKY_DIFFUSE_ALBEDO), 1.0));
+			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(DLSSRR_computeSkyDiffuseAlbedo(sky_color), 1.0));
 			imageStore(dlss_rr_specular_albedo, pixel, vec4(0.0));
 			imageStore(dlss_rr_normal_roughness, pixel, vec4(0.0));
 		}

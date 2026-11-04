@@ -1177,4 +1177,13 @@ float3 DLSSRR_computeSpecularAlbedo(float3 baseColor, float metalness, float die
 // Sky-pixel guide defaults from the DLSS-RR Integration Guide (section 3.4).
 #define DLSSRR_SKY_DIFFUSE_ALBEDO 0.5f
 
+// Sky-pixel diffuse albedo guide: the sky tone-mapped under 1 rather than a constant. RR reapplies the guide sharp at
+// output resolution, so with a constant all sky detail sits in the demodulated radiance, and a per-pixel sky's stars
+// come out as vertical streaks; the raw sky would clamp at 1 and draw the sun's edge. The gain lifts a night sky
+// clear of zero. From m-bo-one/godot-rtx 714043c770.
+float3 DLSSRR_computeSkyDiffuseAlbedo(float3 sky) {
+	float3 gained = sky * 8.0;
+	return gained / (1.0 + max(gained.r, max(gained.g, gained.b)));
+}
+
 #endif // BRDF_HLSLI
