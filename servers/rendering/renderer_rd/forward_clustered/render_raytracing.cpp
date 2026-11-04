@@ -4096,10 +4096,11 @@ static float _rt_dominant_layer_alpha() {
 	return (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/transparency_dominant_layer_alpha");
 }
 
+// p_sbt_offset is the hit group the surface is traced with, which is 0 while its own one compiles.
 static bool _rt_uses_alpha_scissor(const SceneShaderForwardClustered::ShaderData *p_shader,
-		const RTMaterialData *p_material, const SceneShaderRaytracing *p_rt_shader) {
-	if (p_material->rt_sbt_offset > 0) {
-		const SceneShaderRaytracing::CustomShaderEntry *entry = p_rt_shader->get_custom_shader_entry(p_material->rt_sbt_offset);
+		uint32_t p_sbt_offset, const SceneShaderRaytracing *p_rt_shader) {
+	if (p_sbt_offset > 0) {
+		const SceneShaderRaytracing::CustomShaderEntry *entry = p_rt_shader->get_custom_shader_entry(p_sbt_offset);
 		return !entry || entry->uses_alpha_clip;
 	}
 	return p_shader && (p_shader->uses_alpha_clip || p_shader->uses_alpha_antialiasing);
@@ -4718,10 +4719,13 @@ bool RTTlasBuilder::_plan_mesh_instance(const RTPlanContext &p_ctx, RTPlanScratc
 		if (!mat_data) {
 			return false;
 		}
+		// A surface whose hit group is still compiling is traced with the default one (see
+		// _fill_surface_key) rather than left out, so its geometry is visible from the first frame.
+		// It still counts as pending: the not-ready flag stays set, the instance is replanned every
+		// frame until the hit group is live, and grouping waits for it.
 		if (!_hit_group_ready(mat_data)) {
 			all_hit_groups_ready = false;
 			record.pending_surfaces++;
-			continue;
 		}
 
 		records.resize(records.size() + 1);
@@ -5068,9 +5072,11 @@ bool RTTlasBuilder::_hit_group_ready(const RTMaterialData *p_mat_data) const {
 
 void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,
 		RTSurfaceGroupKey &r_key, uint32_t &r_material_flags) const {
-	const bool alpha_scissor = _rt_uses_alpha_scissor(p_shader, p_mat_data, rt_shader);
+	// The default hit group stands in while the surface's own one compiles.
+	const uint32_t sbt_offset = _hit_group_ready(p_mat_data) ? p_mat_data->rt_sbt_offset : 0;
+	const bool alpha_scissor = _rt_uses_alpha_scissor(p_shader, sbt_offset, rt_shader);
 	r_key.cull_mode = _rt_cull_mode(p_shader);
-	r_key.sbt_offset = p_mat_data->rt_sbt_offset;
+	r_key.sbt_offset = sbt_offset;
 	r_key.tlas_mask = p_tlas_mask;
 	r_key.opaque = !alpha_scissor;
 	r_material_flags = _rt_surface_mat_flags(p_shader, p_blend_class);
