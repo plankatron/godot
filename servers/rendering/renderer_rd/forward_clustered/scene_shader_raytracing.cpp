@@ -622,7 +622,16 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	actions.usage_flag_pointers["SCENE_DEPTH"] = &uses_scene_depth;
 	bool uses_instance_custom = false;
 	actions.usage_flag_pointers["INSTANCE_CUSTOM"] = &uses_instance_custom;
+	// Hit shaders have no pixel quad, so derivative built-ins do not exist there (see raytracing_custom_globals_inc.glsl).
 	actions.function_renames["fwidth"] = "rt_fwidth";
+	actions.function_renames["fwidthCoarse"] = "rt_fwidth";
+	actions.function_renames["fwidthFine"] = "rt_fwidth";
+	actions.function_renames["dFdx"] = "rt_derivative";
+	actions.function_renames["dFdxCoarse"] = "rt_derivative";
+	actions.function_renames["dFdxFine"] = "rt_derivative";
+	actions.function_renames["dFdy"] = "rt_derivative";
+	actions.function_renames["dFdyCoarse"] = "rt_derivative";
+	actions.function_renames["dFdyFine"] = "rt_derivative";
 	actions.texture_gradients = { { "UV", "rt_uv_ddx", "rt_uv_ddy" }, { "UV2", "rt_uv2_ddx", "rt_uv2_ddy" } };
 	actions.texture_explicit_gradients = true;
 	actions.texture_gradients_pre_vertex = true; // rt_uv is the mesh UV; vertex() reruns per hit.

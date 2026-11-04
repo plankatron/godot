@@ -120,6 +120,23 @@ vec4 rt_fwidth(vec4 value) {
 	return vec4(RT_FWIDTH_EPSILON);
 }
 
+// dFdx/dFdy: zero, so a textureGrad() fed from them samples mip 0.
+float rt_derivative(float value) {
+	return 0.0;
+}
+
+vec2 rt_derivative(vec2 value) {
+	return vec2(0.0);
+}
+
+vec3 rt_derivative(vec3 value) {
+	return vec3(0.0);
+}
+
+vec4 rt_derivative(vec4 value) {
+	return vec4(0.0);
+}
+
 #include "raytracing_custom_texture_inc.glsl"
 
 /* RT_CUSTOM_TEXTURE_DEFINES */
