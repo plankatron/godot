@@ -3213,7 +3213,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				}
 
 				uint32_t offset = cse->uniform_offsets[u.order];
-				uint32_t size = ShaderLanguage::get_datatype_size(u.type);
+				uint32_t size = SceneShaderRaytracing::material_buffer_uniform_size(u);
 				if (offset + size > cse->uniform_total_size) {
 					continue;
 				}
@@ -3224,6 +3224,11 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 					int32_t idx = material_storage->global_shader_uniform_get_buffer_index(kv.key);
 					uint32_t uidx = (idx >= 0) ? (uint32_t)idx : 0;
 					memcpy(dst, &uidx, sizeof(uint32_t));
+				} else if (u.array_size > 0) {
+					// pack_uniform is scalar-only: an array's Packed*Array value failed its type test and every element
+					// read 0 (terrain_layers' layer_index[]). Arrays use the raster std140 packer.
+					Variant val = material_storage->material_get_param(p_material_rid, kv.key);
+					RendererRD::MaterialStorage::fill_uniform_std140(u, val.get_type() == Variant::NIL ? nullptr : &val, dst, true);
 				} else {
 					Variant val = material_storage->material_get_param(p_material_rid, kv.key);
 					pack_uniform(u, val, dst);
