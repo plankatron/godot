@@ -582,7 +582,7 @@ TEST_CASE("[SceneTree][RenderRaytracing] RAY_* built-ins are read-only fragment 
 	int ray_built_ins = 0;
 	for (const KeyValue<StringName, ShaderLanguage::BuiltInInfo> &built_in : fragment.built_ins) {
 		const String name = built_in.key;
-		if (!name.begins_with("RAY_")) {
+		if (!name.begins_with("RAY_") && name != "PRIMARY_HIT") {
 			continue;
 		}
 		ray_built_ins++;
@@ -599,7 +599,8 @@ TEST_CASE("[SceneTree][RenderRaytracing] RAY_* built-ins are read-only fragment 
 	const String read = "shader_type spatial;\nvoid fragment() {\n"
 						"	if (!RAY_IS_PRIMARY && !RAY_IS_SHADOW && (RAY_IS_DIFFUSE || RAY_IS_SPECULAR) && !RAY_IS_SINGULAR) {\n"
 						"		ALBEDO *= float(RAY_BOUNCES + RAY_DIFFUSE_BOUNCES);\n"
-						"	}\n}\n";
+						"	}\n"
+						"	ALBEDO += (RAY_FOOTPRINT_X + RAY_FOOTPRINT_Y) * float(PRIMARY_HIT);\n}\n";
 	ShaderLanguage language;
 	CHECK(language.compile(read, info) == OK);
 

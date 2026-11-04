@@ -62,6 +62,13 @@ void ShaderTypes::add_raster_ray_renames(HashMap<StringName, String> &r_renames)
 	r_renames["RAY_IS_SINGULAR"] = "true";
 	r_renames["RAY_BOUNCES"] = "0";
 	r_renames["RAY_DIFFUSE_BOUNCES"] = "0";
+	// The real derivatives, in world space. Built from the backend's own VERTEX / INV_VIEW_MATRIX renames, so callers set those first.
+	const String vertex = r_renames.has("VERTEX") ? r_renames["VERTEX"] : String("vertex");
+	const String inv_view = r_renames.has("INV_VIEW_MATRIX") ? r_renames["INV_VIEW_MATRIX"] : String("inv_view_matrix");
+	r_renames["RAY_FOOTPRINT_X"] = "(mat3(" + inv_view + ") * dFdx(" + vertex + "))";
+	r_renames["RAY_FOOTPRINT_Y"] = "(mat3(" + inv_view + ") * dFdy(" + vertex + "))";
+	// Deprecated alias of RAY_IS_PRIMARY.
+	r_renames["PRIMARY_HIT"] = "true";
 }
 
 ShaderTypes *ShaderTypes::singleton = nullptr;
@@ -222,6 +229,11 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SINGULAR"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_DIFFUSE_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
+	// World-space pixel footprint at the surface: dFdx/dFdy of the world position, which hit shaders cannot take.
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT_X"] = constt(ShaderLanguage::TYPE_VEC3);
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT_Y"] = constt(ShaderLanguage::TYPE_VEC3);
+	// Deprecated alias of RAY_IS_PRIMARY, kept for shaders written against it.
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["PRIMARY_HIT"] = constt(ShaderLanguage::TYPE_BOOL);
 
 	// texture streaming
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["STREAMING_LOD"] = ShaderLanguage::TYPE_FLOAT;

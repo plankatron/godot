@@ -744,6 +744,7 @@ void main() {
 #ifdef RT_USES_UV2
 	rt_ray_cone_gradients(h.uv2_density, h.geometry_normal, rt_uv2_ddx, rt_uv2_ddy);
 #endif
+	rt_ray_cone_world_footprint(h.geometry_normal, rt_footprint_x, rt_footprint_y);
 	uint rt_geometry_idx = h.geometry_idx;
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;

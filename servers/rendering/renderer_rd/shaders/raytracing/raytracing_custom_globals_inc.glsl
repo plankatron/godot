@@ -33,6 +33,9 @@ vec2 read_viewport_size = vec2(1.0);
 bool rt_front_facing = true;
 vec2 rt_screen_uv = vec2(0.0);
 vec4 rt_frag_coord = vec4(0.0);
+// RAY_FOOTPRINT_X/Y. Set by the closest hit from the ray cone; zero in the any-hit and without a cone.
+vec3 rt_footprint_x = vec3(0.0);
+vec3 rt_footprint_y = vec3(0.0);
 float alpha_antialiasing_edge = 0.0;
 vec2 alpha_texture_coordinate = vec2(0.0);
 // Vertex-stage built-ins with no RT equivalent; writes are discarded.

@@ -174,6 +174,46 @@ void rt_ray_cone_gradients(float p_density, vec3 p_normal, out vec2 r_ddx, out v
 	r_ddy.y = across / max(abs(dot(p_normal, gl_WorldRayDirectionEXT)), 1e-3);
 }
 
+// World-space pixel footprint on the surface of p_normal (RAY_FOOTPRINT_X/Y), the world position counterpart of
+// rt_ray_cone_gradients: two vectors across the ray, slid along it onto the surface. Zero when the cone is inactive.
+// A primary ray gets the exact pinhole differential, the camera's right and up at the pixel size for the hit's depth;
+// the cone width, which grows with distance rather than depth, overestimates it off axis by 1 / cos.
+// Past a mirror the cone width spreads over an arbitrary basis across the ray, as for the UV gradients.
+void rt_ray_cone_world_footprint(vec3 p_normal, out vec3 r_dx, out vec3 r_dy) {
+	r_dx = vec3(0.0);
+	r_dy = vec3(0.0);
+	if (!rt_ray_cone_active()) {
+		return;
+	}
+	vec3 dir = gl_WorldRayDirectionEXT;
+	vec3 across_x;
+	vec3 across_y;
+	float width;
+	if (rt_ray_is_primary(payload.packed_bounces_flags)) {
+		// Rows of the camera transform: columns 0-2 are its axes, w its position.
+		vec4 row0 = scene_data_block.data.inv_view_matrix[0];
+		vec4 row1 = scene_data_block.data.inv_view_matrix[1];
+		vec4 row2 = scene_data_block.data.inv_view_matrix[2];
+		across_x = vec3(row0.x, row1.x, row2.x);
+		across_y = vec3(row0.y, row1.y, row2.y);
+		mat4 projection = scene_data_block.data.projection_matrix;
+		width = 2.0 / (float(gl_LaunchSizeEXT.y) * abs(projection[1][1]));
+		if (projection[3][3] == 0.0) { // Perspective: scales with depth.
+			vec3 forward = -vec3(row0.z, row1.z, row2.z);
+			vec3 hit_pos = gl_WorldRayOriginEXT + dir * gl_HitTEXT;
+			width *= dot(hit_pos - vec3(row0.w, row1.w, row2.w), forward);
+		}
+	} else {
+		across_x = normalize(cross(dir, abs(dir.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+		across_y = cross(dir, across_x);
+		width = rt_pixel_cone_width();
+	}
+	float n_dot_d = dot(p_normal, dir);
+	n_dot_d = n_dot_d < 0.0 ? min(n_dot_d, -1e-3) : max(n_dot_d, 1e-3);
+	r_dx = width * (across_x - dir * (dot(across_x, p_normal) / n_dot_d));
+	r_dy = width * (across_y - dir * (dot(across_y, p_normal) / n_dot_d));
+}
+
 // UV density of a material UV channel: mesh UV density times UV scale, or the scale alone for triplanar mapping.
 float rt_channel_uv_density(MaterialUVChannel p_ch, float p_mesh_density) {
 	float scale_area = abs(p_ch.scale.x * p_ch.scale.y);
