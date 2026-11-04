@@ -32,15 +32,39 @@
 
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 
+static RD::TextureType _kind_texture_type(BindlessBlock::TextureKind p_kind) {
+	switch (p_kind) {
+		case BindlessBlock::TEXTURE_KIND_2D_ARRAY:
+			return RD::TEXTURE_TYPE_2D_ARRAY;
+		case BindlessBlock::TEXTURE_KIND_3D:
+			return RD::TEXTURE_TYPE_3D;
+		case BindlessBlock::TEXTURE_KIND_CUBE:
+			return RD::TEXTURE_TYPE_CUBE;
+		case BindlessBlock::TEXTURE_KIND_CUBE_ARRAY:
+			return RD::TEXTURE_TYPE_CUBE_ARRAY;
+		default:
+			return RD::TEXTURE_TYPE_2D;
+	}
+}
+
 void BindlessBlock::initialize(RenderingDevice *p_rd) {
 	ERR_FAIL_NULL(p_rd);
 
 	rd = p_rd;
 
-	default_texture = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(
-			RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
-	textures.push_back(default_texture);
-	texture_to_index[default_texture] = 0;
+	static const RendererRD::TextureStorage::DefaultRDTexture defaults[TEXTURE_KIND_MAX] = {
+		RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_WHITE,
+		RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_WHITE,
+		RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_CUBEMAP_WHITE,
+		RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_CUBEMAP_ARRAY_WHITE,
+		RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE,
+	};
+	for (uint32_t k = 0; k < TEXTURE_KIND_MAX; k++) {
+		Table &table = tables[k];
+		table.default_texture = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(defaults[k]);
+		table.textures.push_back(table.default_texture);
+		table.texture_to_index[table.default_texture] = 0;
+	}
 }
 
 void BindlessBlock::begin_frame() {
@@ -57,20 +81,22 @@ void BindlessBlock::begin_frame() {
 	// Scrub dead RIDs: replace with default and add slots to the freelist.
 	uniform_set = RID();
 
-	texture_to_index.clear();
-	texture_to_index[default_texture] = 0;
+	for (Table &table : tables) {
+		table.texture_to_index.clear();
+		table.texture_to_index[table.default_texture] = 0;
 
-	for (uint32_t i = 1; i < textures.size(); i++) {
-		if (!rd->texture_is_valid(textures[i])) {
-			textures[i] = default_texture;
-			if (free_indices_count < free_indices.size()) {
-				free_indices[free_indices_count] = i;
+		for (uint32_t i = 1; i < table.textures.size(); i++) {
+			if (!rd->texture_is_valid(table.textures[i])) {
+				table.textures[i] = table.default_texture;
+				if (table.free_indices_count < table.free_indices.size()) {
+					table.free_indices[table.free_indices_count] = i;
+				} else {
+					table.free_indices.push_back(i);
+				}
+				++table.free_indices_count;
 			} else {
-				free_indices.push_back(i);
+				table.texture_to_index[table.textures[i]] = i;
 			}
-			++free_indices_count;
-		} else {
-			texture_to_index[textures[i]] = i;
 		}
 	}
 
@@ -78,20 +104,30 @@ void BindlessBlock::begin_frame() {
 	version++;
 }
 
-uint32_t BindlessBlock::add_texture(RID p_texture) {
+uint32_t BindlessBlock::add_texture(RID p_texture, TextureKind p_kind) {
 	ERR_FAIL_COND_V_MSG(!is_initialized(), 0, "BindlessBlock not initialized. Call initialize() first.");
+	ERR_FAIL_INDEX_V(p_kind, TEXTURE_KIND_MAX, 0);
+	Table &table = tables[p_kind];
 
 	// Substitute null/stale RIDs with the default white texture.
 	if (!p_texture.is_valid() || !rd->texture_is_valid(p_texture)) {
-		p_texture = default_texture;
+		p_texture = table.default_texture;
 	}
 
-	HashMap<RID, uint32_t>::Iterator it = texture_to_index.find(p_texture);
-	if (it != texture_to_index.end()) {
+	HashMap<RID, uint32_t>::Iterator it = table.texture_to_index.find(p_texture);
+	if (it != table.texture_to_index.end()) {
 		return it->value;
 	}
 
-	if (textures.size() >= MAX_BINDLESS_TEXTURES && free_indices_count == 0) {
+	// RenderingDevice fails the whole set when one texture's type differs from its binding's, which would
+	// take every material's textures down with it. Such a texture (e.g. a 2D array bound to a sampler2D
+	// uniform) samples this table's default instead.
+	if (rd->texture_get_format(p_texture).texture_type != _kind_texture_type(p_kind)) {
+		return 0;
+	}
+
+	const uint32_t capacity = p_kind == TEXTURE_KIND_2D ? MAX_BINDLESS_TEXTURES : TYPED_TABLE_CAPACITY;
+	if (table.textures.size() >= capacity && table.free_indices_count == 0) {
 		ERR_PRINT_ONCE("BindlessBlock: Maximum texture count exceeded. Using default texture.");
 		return 0;
 	}
@@ -101,53 +137,63 @@ uint32_t BindlessBlock::add_texture(RID p_texture) {
 	}
 
 	uint32_t index;
-	if (free_indices_count > 0) {
-		--free_indices_count;
-		index = free_indices[free_indices_count];
-		textures[index] = p_texture;
+	if (table.free_indices_count > 0) {
+		--table.free_indices_count;
+		index = table.free_indices[table.free_indices_count];
+		table.textures[index] = p_texture;
 	} else {
-		index = textures.size();
-		textures.push_back(p_texture);
+		index = table.textures.size();
+		table.textures.push_back(p_texture);
 	}
 
-	texture_to_index[p_texture] = index;
+	table.texture_to_index[p_texture] = index;
 	version++;
 	return index;
 }
 
 void BindlessBlock::replace_texture(RID p_old, RID p_new) {
-	HashMap<RID, uint32_t>::Iterator it = texture_to_index.find(p_old);
-	if (it == texture_to_index.end()) {
-		return;
-	}
-	const uint32_t index = it->value;
-	texture_to_index.remove(it);
-	textures[index] = p_new;
-	if (!texture_to_index.has(p_new)) {
-		texture_to_index[p_new] = index;
+	for (Table &table : tables) {
+		HashMap<RID, uint32_t>::Iterator it = table.texture_to_index.find(p_old);
+		if (it == table.texture_to_index.end()) {
+			continue;
+		}
+		const uint32_t index = it->value;
+		table.texture_to_index.remove(it);
+		table.textures[index] = p_new;
+		if (!table.texture_to_index.has(p_new)) {
+			table.texture_to_index[p_new] = index;
+		}
 	}
 }
 
 RID BindlessBlock::create_uniform_set(RID p_shader, uint32_t p_set_index) const {
 	ERR_FAIL_COND_V_MSG(!is_initialized(), RID(), "BindlessBlock not initialized.");
 
+	// Every table is supplied; uniform_set_create() only binds the ones p_shader declares.
 	Vector<RD::Uniform> uniforms;
-
-	RD::Uniform u;
-	u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-	u.binding = 0;
-	u.variable_count = true;
-	for (uint32_t i = 0; i < textures.size(); i++) {
-		u.append_id(textures[i]);
+	for (uint32_t k = 0; k < TEXTURE_KIND_MAX; k++) {
+		const Table &table = tables[k];
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.binding = k;
+		u.variable_count = k == TEXTURE_KIND_2D;
+		for (uint32_t i = 0; i < table.textures.size(); i++) {
+			u.append_id(table.textures[i]);
+		}
+		// Fixed-size bindings are not partially bound, so every element must be written.
+		if (k != TEXTURE_KIND_2D) {
+			for (uint32_t i = table.textures.size(); i < TYPED_TABLE_CAPACITY; i++) {
+				u.append_id(table.default_texture);
+			}
+		}
+		uniforms.push_back(u);
 	}
-	uniforms.push_back(u);
 
 	return rd->uniform_set_create(uniforms, p_shader, p_set_index);
 }
 
 void BindlessBlock::finalize(RID p_shader, uint32_t p_set_index) {
 	ERR_FAIL_COND_MSG(!is_initialized(), "BindlessBlock not initialized.");
-	ERR_FAIL_COND_MSG(textures.is_empty(), "BindlessBlock has no textures.");
 
 	if (is_finalized() && !needs_refinalize && rd->uniform_set_is_valid(uniform_set)) {
 		return;
@@ -168,10 +214,13 @@ void BindlessBlock::clear() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	textures.clear();
-	texture_to_index.clear();
-	free_indices.clear();
-	free_indices_count = 0;
+	for (Table &table : tables) {
+		table.textures.clear();
+		table.texture_to_index.clear();
+		table.free_indices.clear();
+		table.free_indices_count = 0;
+		table.default_texture = RID();
+	}
 	rd = nullptr;
 }
 

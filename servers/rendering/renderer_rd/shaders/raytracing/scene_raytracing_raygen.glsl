@@ -649,7 +649,12 @@ void main() {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT tlas;
 layout(location = 0) rayPayloadInEXT PathPayload payload;
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless tables, one per texture type; see BindlessBlock::TextureKind. Only the highest binding may be unbounded.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 
@@ -944,7 +949,12 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 
 #include "raytracing_entry_material_inc.glsl"
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless tables, one per texture type; see BindlessBlock::TextureKind. Only the highest binding may be unbounded.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 
@@ -1123,7 +1133,12 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 
 #include "raytracing_entry_material_inc.glsl"
 
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+// Bindless tables, one per texture type; see BindlessBlock::TextureKind. Only the highest binding may be unbounded.
+layout(set = 1, binding = 0) uniform texture2DArray bindless_textures_2d_array[256];
+layout(set = 1, binding = 1) uniform texture3D bindless_textures_3d[256];
+layout(set = 1, binding = 2) uniform textureCube bindless_textures_cube[256];
+layout(set = 1, binding = 3) uniform textureCubeArray bindless_textures_cube_array[256];
+layout(set = 1, binding = 4) uniform texture2D bindless_textures[];
 
 #include "raytracing_custom_texture_inc.glsl"
 #include "raytracing_samplers_inc.glsl"

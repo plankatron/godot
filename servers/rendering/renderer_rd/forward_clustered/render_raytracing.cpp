@@ -3227,13 +3227,14 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 			for (int ti = 0; ti < cse->texture_uniforms.size(); ti++) {
 				const SceneShaderRaytracing::TextureUniformInfo &tui = cse->texture_uniforms[ti];
 				uint32_t bindless_idx = 0;
+				const BindlessBlock::TextureKind kind = tui.kind; // The generated GLSL indexes this same table.
 
 				if (tui.is_global) {
 					RID tex_rid = material_storage->global_shader_uniform_get_texture(tui.name);
 					if (tex_rid.is_valid()) {
 						RID rd_tex = ts->texture_get_rd_texture(tex_rid, tui.use_color);
 						if (rd_tex.is_valid()) {
-							bindless_idx = bindless_block->add_texture(rd_tex);
+							bindless_idx = bindless_block->add_texture(rd_tex, kind);
 						}
 					}
 				} else {
@@ -3243,13 +3244,14 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 						if (tex_rid.is_valid()) {
 							RID rd_tex = ts->texture_get_rd_texture(tex_rid, tui.use_color);
 							if (rd_tex.is_valid()) {
-								bindless_idx = bindless_block->add_texture(rd_tex);
+								bindless_idx = bindless_block->add_texture(rd_tex, kind);
 							}
 						}
 					}
 				}
 
-				if (bindless_idx == 0 && tui.hint != ShaderLanguage::ShaderNode::Uniform::HINT_NONE) {
+				// The hint defaults are 2D; index 0 of any other table already is that table's white default.
+				if (bindless_idx == 0 && kind == BindlessBlock::TEXTURE_KIND_2D && tui.hint != ShaderLanguage::ShaderNode::Uniform::HINT_NONE) {
 					using Hint = ShaderLanguage::ShaderNode::Uniform::Hint;
 					RID default_tex;
 					switch (tui.hint) {
@@ -3275,7 +3277,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				}
 
 				RT_VALIDATE(rt_validation().check_texture_slot(tui.name, tui.buffer_offset, cse->uniform_total_size, bindless_idx,
-						bindless_block ? bindless_block->get_texture_count() : 0));
+						bindless_block ? bindless_block->get_texture_count(kind) : 0));
 				if (tui.buffer_offset + 4 <= cse->uniform_total_size) {
 					memcpy(ubo_data.ptrw() + tui.buffer_offset, &bindless_idx, 4);
 				}

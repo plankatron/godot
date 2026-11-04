@@ -32,7 +32,8 @@ layout(set = 1, binding = 4, std140) uniform FogRayQueryParams {
 }
 fog_ray_query;
 
-layout(set = 2, binding = 0) uniform texture2D bindless_textures[];
+// BindlessBlock::TEXTURE_KIND_2D; the typed tables at bindings 0-3 are not used here.
+layout(set = 2, binding = 4) uniform texture2D bindless_textures[];
 
 #include "../raytracing/raytracing_shadow_query_inc.glsl"
 

@@ -429,6 +429,21 @@ struct SceneShaderRaytracing::PipelineBuildTask {
 	WorkerThreadPool::TaskID worker_id = WorkerThreadPool::INVALID_TASK_ID;
 };
 
+BindlessBlock::TextureKind SceneShaderRaytracing::_bindless_kind(ShaderLanguage::DataType p_type) {
+	switch (p_type) {
+		case ShaderLanguage::TYPE_SAMPLER2DARRAY:
+			return BindlessBlock::TEXTURE_KIND_2D_ARRAY;
+		case ShaderLanguage::TYPE_SAMPLER3D:
+			return BindlessBlock::TEXTURE_KIND_3D;
+		case ShaderLanguage::TYPE_SAMPLERCUBE:
+			return BindlessBlock::TEXTURE_KIND_CUBE;
+		case ShaderLanguage::TYPE_SAMPLERCUBEARRAY:
+			return BindlessBlock::TEXTURE_KIND_CUBE_ARRAY;
+		default:
+			return BindlessBlock::TEXTURE_KIND_2D;
+	}
+}
+
 void SceneShaderRaytracing::_strip_texture_globals(String &r_globals, const String &p_tex_name) {
 	const String decl_marker = " m_" + p_tex_name + ";";
 	int pos = r_globals.find(decl_marker);
@@ -485,13 +500,15 @@ void SceneShaderRaytracing::_finalize_uniforms_with_textures(
 
 		TextureUniformInfo tui;
 		tui.name = tex.name;
+		tui.kind = _bindless_kind(tex.type);
 		tui.hint = tex.hint;
 		tui.use_color = tex.use_color;
 		tui.is_global = tex.global;
 		tui.buffer_offset = offset;
 		r_entry.texture_uniforms.push_back(tui);
 
-		if (tex.hint == ShaderLanguage::ShaderNode::Uniform::HINT_ALPHA) {
+		// Ray query alpha testing samples mat.albedo_texture from the 2D table.
+		if (tex.hint == ShaderLanguage::ShaderNode::Uniform::HINT_ALPHA && tui.kind == BindlessBlock::TEXTURE_KIND_2D) {
 			if (r_entry.alpha_texture_buffer_offset != UINT32_MAX) {
 				WARN_PRINT(vformat("Custom RT shader has multiple hint_alpha textures; '%s' will be ignored. Only one hint_alpha texture is supported for ray query alpha testing.", tex.name));
 			} else {
@@ -1303,7 +1320,11 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		String tex_defines;
 		for (int ti = 0; ti < entry.texture_uniforms.size(); ti++) {
 			const TextureUniformInfo &tui = entry.texture_uniforms[ti];
-			tex_defines += "#define m_" + tui.name + " bindless_textures[nonuniformEXT(material.m_" + tui.name + ")]\n";
+			// The table's element type must match the uniform's sampler type: sampler2DArray(texture2D, ...) does not compile.
+			static const char *tables[BindlessBlock::TEXTURE_KIND_MAX] = {
+				"bindless_textures_2d_array", "bindless_textures_3d", "bindless_textures_cube", "bindless_textures_cube_array", "bindless_textures"
+			};
+			tex_defines += "#define m_" + tui.name + " " + tables[tui.kind] + "[nonuniformEXT(material.m_" + tui.name + ")]\n";
 		}
 		String uniform_members = entry.uniform_members.is_empty() ? String("float _rt_pad;") : entry.uniform_members;
 		if (entry.uses_scene_depth) {

@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/templates/local_vector.h"
+#include "servers/rendering/renderer_rd/bindless_block.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_capture.h"
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h" // IWYU pragma: keep
@@ -434,6 +435,7 @@ public:
 
 	struct TextureUniformInfo {
 		StringName name;
+		BindlessBlock::TextureKind kind = BindlessBlock::TEXTURE_KIND_2D; // Table the index refers to, from the sampler type.
 		ShaderLanguage::ShaderNode::Uniform::Hint hint = ShaderLanguage::ShaderNode::Uniform::HINT_NONE;
 		bool use_color = false;
 		bool is_global = false;
@@ -548,6 +550,7 @@ private:
 	// Source-hash slot management.
 	uint32_t _register_slot(uint32_t p_shader_id, RID p_material, bool p_is_procedural);
 	bool _preprocess_shader(RID p_material, bool p_is_procedural, CustomShaderEntry &r_entry);
+	static BindlessBlock::TextureKind _bindless_kind(ShaderLanguage::DataType p_type);
 	void _strip_texture_globals(String &r_globals, const String &p_tex_name);
 	void _finalize_uniforms_with_textures(CustomShaderEntry &r_entry, const ShaderCompiler::GeneratedCode &p_gen_code, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, bool p_strip_intersection_globals);
 
