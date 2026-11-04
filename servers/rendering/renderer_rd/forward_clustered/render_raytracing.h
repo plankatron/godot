@@ -1102,6 +1102,7 @@ struct RTViewportState {
 	RID light_buffer;
 	RID params_buffer;
 	RID scene_uniform_set;
+	LocalVector<uint64_t> scene_uniform_set_key; // Shader, bindings and RIDs scene_uniform_set was created from, see update_uniform_set().
 
 	RID fog_shadows_ubo;
 	RID fog_shadows_uniform_set;

@@ -6101,28 +6101,48 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 
 	RID result;
 	if (shader_rd.is_valid()) {
-		// Release the previous frame's scene uniform set now (before allocating
-		// this frame's). Disposal is deferred by RenderingDevice until the frame
-		// that used it has finished on the GPU, so this is safe and prevents the
-		// uniform_set_owner pool from leaking one RID per accumulated frame.
-		//
+		// A descriptor set only goes stale when what it binds changes. Buffers updated
+		// in place (params, lights, scene UBO) keep their RID, so on most frames the
+		// shader, the layout and every bound RID match the live set, and it is reused.
+		LocalVector<uint64_t> key;
+		key.push_back(shader_rd.get_id());
+		for (const RD::Uniform &u : uniforms) {
+			key.push_back((uint64_t(u.binding) << 32) | uint64_t(u.uniform_type));
+			for (uint32_t i = 0; i < u.get_id_count(); i++) {
+				key.push_back(u.get_id(i).get_id());
+			}
+		}
+
 		// The set references render-buffer resources, so RenderingDevice may have
 		// already auto-freed it via its dependency cascade (e.g. a texture/buffer
 		// it referenced was recreated). RID::is_valid() only checks for non-null,
-		// so we must query uniform_set_is_valid() to avoid a double free.
-		if (p_state->scene_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->scene_uniform_set)) {
-			RD::get_singleton()->free_rid(p_state->scene_uniform_set);
+		// so we must query uniform_set_is_valid().
+		const bool live = p_state->scene_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->scene_uniform_set);
+		bool reuse = live && p_state->scene_uniform_set_key.size() == key.size();
+		for (uint32_t i = 0; reuse && i < key.size(); i++) {
+			reuse = p_state->scene_uniform_set_key[i] == key[i];
 		}
-		p_state->scene_uniform_set = RID();
 
-		result = RD::get_singleton()->uniform_set_create(
-				uniforms,
-				shader_rd,
-				RenderForwardClustered::SCENE_UNIFORM_SET,
-				/*p_linear_pool=*/true);
-		p_state->scene_uniform_set = result;
-		if (result.is_valid()) {
-			RD::get_singleton()->set_resource_name(result, "RT Scene Uniform Set");
+		if (reuse) {
+			result = p_state->scene_uniform_set;
+		} else {
+			// Disposal is deferred by RenderingDevice until the frame that used the
+			// set has finished on the GPU, so freeing it here is safe.
+			if (live) {
+				RD::get_singleton()->free_rid(p_state->scene_uniform_set);
+			}
+			// Not from the linear pool: that pool is reset when its frame comes
+			// round again, and this set outlives the frame it was created in.
+			result = RD::get_singleton()->uniform_set_create(
+					uniforms,
+					shader_rd,
+					RenderForwardClustered::SCENE_UNIFORM_SET,
+					/*p_linear_pool=*/false);
+			p_state->scene_uniform_set = result;
+			p_state->scene_uniform_set_key = key;
+			if (result.is_valid()) {
+				RD::get_singleton()->set_resource_name(result, "RT Scene Uniform Set");
+			}
 		}
 
 		// === SET 1: Bindless textures ===
