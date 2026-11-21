@@ -595,6 +595,7 @@ bool DLSSEffect::is_ready(DLSSContext *p_context) {
 // ============================================================================
 
 static bool g_ngx_initialized = false;
+static bool g_ngx_init_attempted = false;
 static NVSDK_NGX_Parameter *g_ngx_params = nullptr;
 static bool g_ngx_dlss_rr_available = false;
 static bool g_ngx_dlss_sr_available = false;
@@ -638,6 +639,10 @@ static bool _ngx_ensure_init() {
 	if (g_ngx_initialized) {
 		return true;
 	}
+	if (g_ngx_init_attempted) {
+		return false;
+	}
+	g_ngx_init_attempted = true;
 
 	RenderingDevice *rd = RD::get_singleton();
 	if (!rd) {
@@ -655,8 +660,15 @@ static bool _ngx_ensure_init() {
 
 	print_line("[NGX DLSS] Vulkan handles acquired, initializing NGX...");
 
-	// Create the log/data directory
-	DirAccess::make_dir_absolute("/tmp/ngx_dlss_logs");
+	// Keep NGX logs in Godot's writable per-user application data directory.
+	// Do not use a global temporary path: sandboxed systems may not provide one,
+	// and application logs should stay with this game's user data.
+	String ngx_app_data_dir = OS::get_singleton()->get_user_data_dir().path_join("ngx_dlss_logs");
+	Error mkdir_error = DirAccess::make_dir_recursive_absolute(ngx_app_data_dir);
+	if (mkdir_error != OK) {
+		ERR_PRINT(vformat("[NGX DLSS] Failed to create NGX data directory: %s (error %d)", ngx_app_data_dir, mkdir_error));
+		return false;
+	}
 
 	// Tell NGX where to find DLSS feature .so files (libnvidia-ngx-dlss*.so)
 	// Search order:
@@ -677,9 +689,10 @@ static bool _ngx_ensure_init() {
 		}
 		return result;
 	};
-	static thread_local std::wstring shipped_ws, dev_ws;
+	static thread_local std::wstring shipped_ws, dev_ws, app_data_ws;
 	shipped_ws = to_wstring(ngx_shipped);
 	dev_ws = to_wstring(ngx_dev);
+	app_data_ws = to_wstring(ngx_app_data_dir);
 	const wchar_t *ngx_search_paths[] = {
 		shipped_ws.c_str(),
 		dev_ws.c_str(),
@@ -722,7 +735,7 @@ static bool _ngx_ensure_init() {
 			"a0f57b54-1daf-4934-90ae-c4035c19df04", // Project ID (GUID format)
 			NVSDK_NGX_ENGINE_TYPE_CUSTOM,
 			"4.7.0",  // Engine version
-			L"/tmp/ngx_dlss_logs",
+			app_data_ws.c_str(),
 			vk_instance, vk_phys_device, vk_device,
 			real_vkGetInstanceProcAddr, real_vkGetDeviceProcAddr,
 			&feature_info,
@@ -812,7 +825,7 @@ DLSSEffect::~DLSSEffect() {
 
 DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_size) {
 	if (!_ngx_ensure_init()) {
-		ERR_PRINT("[NGX DLSS] Cannot create context — NGX init failed");
+		WARN_PRINT_ONCE("[NGX DLSS] Context unavailable after NGX initialization failed; continuing without NGX DLSS through the renderer's normal presentation path.");
 		return nullptr;
 	}
 
