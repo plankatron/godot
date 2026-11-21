@@ -666,14 +666,15 @@ static bool _ngx_ensure_init() {
 	String ngx_shipped = exe_dir;
 	String ngx_dev = exe_dir.path_join("../thirdparty/ngx/lib/linux_x86_64").simplify_path();
 
-	// Convert to wchar_t for NGX API
-	// On Linux wchar_t is 4 bytes (UTF-32), so widen char-by-char from UTF-8
+	// Convert to wchar_t for the NGX API. On Linux, wchar_t uses UTF-32, which
+	// matches Godot's internal String representation. Widening UTF-8 bytes one
+	// at a time corrupts non-ASCII paths (for example, usernames with accents).
 	auto to_wstring = [](const String &s) -> std::wstring {
-		CharString utf8 = s.utf8();
+		static_assert(sizeof(wchar_t) == sizeof(char32_t), "NGX Linux paths require 32-bit wchar_t");
 		std::wstring result;
-		result.reserve(utf8.length());
-		for (int i = 0; i < utf8.length(); i++) {
-			result.push_back((wchar_t)(unsigned char)utf8[i]);
+		result.reserve(s.length());
+		for (int i = 0; i < s.length(); i++) {
+			result.push_back(static_cast<wchar_t>(s[i]));
 		}
 		return result;
 	};
